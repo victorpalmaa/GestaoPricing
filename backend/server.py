@@ -119,6 +119,27 @@ class PriceCreate(BaseModel):
 async def root():
     return {"message": "Hello World"}
 
+@api_router.get("/status")
+async def status():
+    return {
+        "supabase_url": bool(SUPABASE_URL),
+        "supabase_key": bool(SUPABASE_SERVICE_ROLE_KEY),
+        "supabase_client": bool(supabase),
+        "email_from": os.environ.get("EMAIL_FROM") or "",
+        "resend": bool(os.environ.get("RESEND_API_KEY")),
+        "cors": os.environ.get("CORS_ORIGINS") or "*",
+    }
+
+@api_router.get("/debug/users-count")
+async def users_count():
+    try:
+        if supabase is None:
+            return {"supabase": False, "count": 0}
+        r = supabase.table("users").select("id").execute()
+        return {"supabase": True, "count": len(r.data or [])}
+    except Exception as e:
+        return {"supabase": True, "error": str(e)}
+
 
 def require_supabase():
     if supabase is None:
@@ -311,7 +332,8 @@ async def forgot_password(input: ForgotPasswordInput):
         if not existing.data:
             raise HTTPException(status_code=404, detail="Não há usuário com este e-mail cadastrado")
 
-        redirect_to = os.environ.get("SUPABASE_RESET_REDIRECT", os.environ.get("SITE_URL", "http://localhost:5174/update-password"))
+        base = os.environ.get("SUPABASE_RESET_REDIRECT") or os.environ.get("SITE_URL") or "http://localhost:5174"
+        redirect_to = base if base.rstrip("/").endswith("/update-password") else f"{base.rstrip('/')}" + "/update-password"
         sent_via_supabase = False
         try:
             if hasattr(supabase, "auth") and hasattr(supabase.auth, "reset_password_for_email"):
