@@ -193,6 +193,23 @@ def send_reset_email_resend(to_email: str, subject: str, html: str) -> bool:
     except Exception:
         return False
 
+def create_reset_token(email: str, minutes: int = 60) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    payload = {
+        "type": "reset_password",
+        "email": email,
+        "exp": exp,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def validate_reset_jwt(token: str, email: str) -> bool:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload.get("type") == "reset_password" and str(payload.get("email")).lower() == email.lower()
+    except JWTError:
+        return False
+
 def ensure_auth_user(email: str) -> None:
     try:
         try:
@@ -344,19 +361,7 @@ async def forgot_password(input: ForgotPasswordInput):
         except Exception:
             sent_via_supabase = False
 
-        token = uuid.uuid4().hex + uuid.uuid4().hex[:16]
-        import hashlib as _hl
-        token_hash = _hl.sha256(token.encode("utf-8")).hexdigest()
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-        try:
-            supabase.table("password_resets").insert({
-                "email": input.email,
-                "token_hash": token_hash,
-                "expires_at": expires_at,
-            }).execute()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Erro criando token de recuperação: {e}")
-
+        token = create_reset_token(input.email, 60)
         reset_link = f"{redirect_to}?token={token}&email={input.email}"
         html = (
             "<p>Para redefinir sua senha, clique no botão abaixo:</p>"
@@ -376,24 +381,24 @@ async def reset_password(input: ResetPasswordInput):
         if not (input.email and input.token and input.new_password):
             raise HTTPException(status_code=400, detail="Parâmetros inválidos")
 
-        import hashlib as _hl
-        token_hash = _hl.sha256(input.token.encode("utf-8")).hexdigest()
-        valid_via_table = False
-        try:
-            res = supabase.table("password_resets").select("token_hash,expires_at").eq("email", input.email).eq("token_hash", token_hash).limit(1).execute()
-            if res.data:
-                rec = res.data[0]
-                try:
-                    exp_dt = datetime.fromisoformat(rec.get("expires_at"))
-                except Exception:
-                    exp_dt = datetime.now(timezone.utc)
-                if datetime.now(timezone.utc) <= exp_dt:
-                    valid_via_table = True
-        except Exception:
-            pass
-
-        if not valid_via_table:
-            if not validate_supabase_recovery(input.token, input.email):
+        valid_via_jwt = validate_reset_jwt(input.token, input.email)
+        if not valid_via_jwt:
+            import hashlib as _hl
+            token_hash = _hl.sha256(input.token.encode("utf-8")).hexdigest()
+            valid_via_table = False
+            try:
+                res = supabase.table("password_resets").select("token_hash,expires_at").eq("email", input.email).eq("token_hash", token_hash).limit(1).execute()
+                if res.data:
+                    rec = res.data[0]
+                    try:
+                        exp_dt = datetime.fromisoformat(rec.get("expires_at"))
+                    except Exception:
+                        exp_dt = datetime.now(timezone.utc)
+                    if datetime.now(timezone.utc) <= exp_dt:
+                        valid_via_table = True
+            except Exception:
+                valid_via_table = False
+            if not valid_via_table and not validate_supabase_recovery(input.token, input.email):
                 raise HTTPException(status_code=400, detail="Token inválido ou expirado")
 
         new_hash = bcrypt.hashpw(input.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -483,7 +488,18 @@ async def get_prices(current_user: UserOut = Depends(get_current_user)):
 async def add_price(input: PriceCreate, current_user: UserOut = Depends(get_current_user)):
     require_supabase()
     item = Price(**input.model_dump())
-    doc = {
+    doc_snake = {
+        "id": item.id,
+        "cliente": item.cliente,
+        "sku": item.sku,
+        "pricingid": item.pricingId,
+        "preco_liquido": item.precoLiquido,
+        "preco_bruto": item.precoBruto,
+        "margem_bruta": item.margemBruta,
+        "volume": item.volume,
+        "status": item.status,
+    }
+    doc_flat = {
         "id": item.id,
         "cliente": item.cliente,
         "sku": item.sku,
@@ -495,24 +511,40 @@ async def add_price(input: PriceCreate, current_user: UserOut = Depends(get_curr
         "status": item.status,
     }
     try:
-        supabase.table("prices").insert(doc).execute()
+        supabase.table("prices").insert(doc_snake).execute()
         return item
     except Exception as e:
         msg = str(e)
-        if "PGRST204" in msg and "pricingid" in msg:
-            try:
-                doc.pop("pricingid", None)
-                supabase.table("prices").insert(doc).execute()
-                return item
-            except Exception as e2:
-                raise HTTPException(status_code=500, detail=f"Erro criando preço: {e2}")
-        raise HTTPException(status_code=500, detail=f"Erro criando preço: {e}")
+        try:
+            supabase.table("prices").insert(doc_flat).execute()
+            return item
+        except Exception as e2:
+            msg2 = str(e2)
+            if ("PGRST" in msg2 and "pricingid" in msg2) or ("pricingid" in msg2.lower()):
+                try:
+                    doc_snake.pop("pricingid", None)
+                    doc_flat.pop("pricingid", None)
+                    supabase.table("prices").insert(doc_snake).execute()
+                    return item
+                except Exception as e3:
+                    raise HTTPException(status_code=500, detail=f"Erro criando preço: {e3}")
+            raise HTTPException(status_code=500, detail=f"Erro criando preço: {e2}")
 
 @api_router.put("/prices/{price_id}", response_model=Price)
 async def update_price(price_id: str, input: PriceCreate, current_user: UserOut = Depends(get_current_user)):
     require_supabase()
     try:
-        update_doc = {
+        update_snake = {
+            "cliente": input.cliente,
+            "sku": input.sku,
+            "pricingid": input.pricingId,
+            "preco_liquido": input.precoLiquido,
+            "preco_bruto": input.precoBruto,
+            "margem_bruta": input.margemBruta,
+            "volume": input.volume,
+            "status": input.status,
+        }
+        update_flat = {
             "cliente": input.cliente,
             "sku": input.sku,
             "pricingid": input.pricingId,
@@ -522,7 +554,7 @@ async def update_price(price_id: str, input: PriceCreate, current_user: UserOut 
             "volume": input.volume,
             "status": input.status,
         }
-        res = supabase.table("prices").update(update_doc).eq("id", price_id).execute()
+        res = supabase.table("prices").update(update_snake).eq("id", price_id).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail="Preço não encontrado")
         record = res.data[0]
@@ -552,30 +584,50 @@ async def update_price(price_id: str, input: PriceCreate, current_user: UserOut 
     except HTTPException:
         raise
     except Exception as e:
-        msg = str(e)
-        if "PGRST204" in msg and "pricingid" in msg:
-            try:
-                update_doc.pop("pricingid", None)
-                res = supabase.table("prices").update(update_doc).eq("id", price_id).execute()
-                if not res.data:
-                    raise HTTPException(status_code=404, detail="Preço não encontrado")
-                record = res.data[0]
-                model = {
-                    "id": record.get("id"),
-                    "cliente": record.get("cliente") or "",
-                    "sku": record.get("sku") or "",
-                    "pricingId": record.get("pricingId") or record.get("pricingid") or "",
-                    "precoLiquido": record.get("precoLiquido") or record.get("preco_liquido") or record.get("precoliquido") or 0.0,
-                    "precoBruto": record.get("precoBruto") or record.get("preco_bruto") or record.get("precobruto") or 0.0,
-                    "margemBruta": record.get("margemBruta") or record.get("margem_bruta") or record.get("margembruta") or 0.0,
-                    "volume": record.get("volume") or 0,
-                    "createdAt": datetime.now(timezone.utc),
-                    "status": record.get("status") or "em_aberto",
-                }
-                return Price(**model)
-            except Exception as e2:
-                raise HTTPException(status_code=500, detail=f"Erro atualizando preço: {e2}")
-        raise HTTPException(status_code=500, detail=f"Erro atualizando preço: {e}")
+        try:
+            res = supabase.table("prices").update(update_flat).eq("id", price_id).execute()
+            if not res.data:
+                raise HTTPException(status_code=404, detail="Preço não encontrado")
+            record = res.data[0]
+            model = {
+                "id": record.get("id"),
+                "cliente": record.get("cliente") or "",
+                "sku": record.get("sku") or "",
+                "pricingId": record.get("pricingId") or record.get("pricingid") or "",
+                "precoLiquido": record.get("precoLiquido") or record.get("preco_liquido") or record.get("precoliquido") or 0.0,
+                "precoBruto": record.get("precoBruto") or record.get("preco_bruto") or record.get("precobruto") or 0.0,
+                "margemBruta": record.get("margemBruta") or record.get("margem_bruta") or record.get("margembruta") or 0.0,
+                "volume": record.get("volume") or 0,
+                "createdAt": datetime.now(timezone.utc),
+                "status": record.get("status") or "em_aberto",
+            }
+            return Price(**model)
+        except Exception as e2:
+            msg2 = str(e2)
+            if ("PGRST" in msg2 and "pricingid" in msg2) or ("pricingid" in msg2.lower()):
+                try:
+                    update_snake.pop("pricingid", None)
+                    update_flat.pop("pricingid", None)
+                    res = supabase.table("prices").update(update_snake).eq("id", price_id).execute()
+                    if not res.data:
+                        raise HTTPException(status_code=404, detail="Preço não encontrado")
+                    record = res.data[0]
+                    model = {
+                        "id": record.get("id"),
+                        "cliente": record.get("cliente") or "",
+                        "sku": record.get("sku") or "",
+                        "pricingId": record.get("pricingId") or record.get("pricingid") or "",
+                        "precoLiquido": record.get("precoLiquido") or record.get("preco_liquido") or record.get("precoliquido") or 0.0,
+                        "precoBruto": record.get("precoBruto") or record.get("preco_bruto") or record.get("precobruto") or 0.0,
+                        "margemBruta": record.get("margemBruta") or record.get("margem_bruta") or record.get("margembruta") or 0.0,
+                        "volume": record.get("volume") or 0,
+                        "createdAt": datetime.now(timezone.utc),
+                        "status": record.get("status") or "em_aberto",
+                    }
+                    return Price(**model)
+                except Exception as e3:
+                    raise HTTPException(status_code=500, detail=f"Erro atualizando preço: {e3}")
+            raise HTTPException(status_code=500, detail=f"Erro atualizando preço: {e2}")
 
 @api_router.delete("/prices/{price_id}")
 async def delete_price(price_id: str, current_user: UserOut = Depends(get_current_user)):
