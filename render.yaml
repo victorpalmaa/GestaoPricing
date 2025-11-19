@@ -33,3 +33,5 @@ services:
         sync: false
       - key: EMAIL_FROM
         value: no-reply@pronutrition.com.br
+      - key: CORPORATE_ONLY
+        value: "true"

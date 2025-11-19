@@ -20,8 +20,8 @@ const Cadastro = ({ setUser }) => {
   const [loading, setLoading] = useState(false);
 
   const validateEmail = (email) => {
-    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      setEmailError('E-mail inválido');
+    if (email && !email.endsWith('@pronutrition.com.br')) {
+      setEmailError('Email deve ser corporativo (@pronutrition.com.br)');
       return false;
     }
     setEmailError('');
@@ -214,7 +214,7 @@ const Cadastro = ({ setUser }) => {
                   type="email"
                   required
                   className="input-pronutrition pl-10"
-                  placeholder="seu.email@dominio.com"
+                  placeholder="seu.email@pronutrition.com.br"
                   value={formData.email}
                   onChange={handleChange}
                   style={{ 
