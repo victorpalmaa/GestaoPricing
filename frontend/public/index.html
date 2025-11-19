@@ -5,6 +5,9 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#000000" />
         <meta name="description" content="PRONUTRITION | Gestão de Pricing" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/logo-pronutrition-symbol.png" />
+        <link rel="icon" type="image/png" sizes="16x16" href="/logo-pronutrition-symbol.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/logo-pronutrition-symbol.png" />
         <!--
       manifest.json provides metadata used when your web app is installed on a
       user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
@@ -63,6 +66,10 @@
       To create a production bundle, use `npm run build` or `yarn build`.
     -->
         
+        <script>
+          window.__ENV__ = window.__ENV__ || {};
+          window.__ENV__.VITE_API_URL = 'https://eighty-icons-vanish.loca.lt/api';
+        </script>
         <script>
             !(function (t, e) {
                 var o, n, p, r;
