@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: gestaopricing-backend
+    name: GestaoPricing
     env: python
     plan: free
     rootDirectory: backend
@@ -20,7 +20,7 @@ services:
       - key: SUPABASE_RESET_REDIRECT
         value: https://gestaopricing.vercel.app/update-password
       - key: CORS_ORIGINS
-        value: https://gestaopricing.vercel.app
+        value: https://gestaopricing.vercel.app,https://gestaopricing.onrender.com
       - key: CORS_ORIGIN_REGEX
         value: https://.*\.vercel\.app$
       - key: JWT_ALGORITHM
@@ -32,4 +32,4 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
-        value: onboarding@resend.dev
+        value: no-reply@pronutrition.com.br
