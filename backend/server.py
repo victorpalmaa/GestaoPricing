@@ -250,7 +250,8 @@ def validate_supabase_recovery(token: str, email: str) -> bool:
 async def register_user(input: UserCreate):
     require_supabase()
 
-    if not input.email.endswith("@pronutrition.com.br"):
+    corp_only = os.environ.get("CORPORATE_ONLY")
+    if corp_only and corp_only.lower() in ("1","true","yes") and not input.email.endswith("@pronutrition.com.br"):
         raise HTTPException(status_code=400, detail="Email deve ser corporativo (@pronutrition.com.br)")
 
     # Check existing user

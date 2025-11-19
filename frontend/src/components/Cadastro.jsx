@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getApiBase } from '@/lib/utils';
 const allowedAreas = ['Pricing', 'Pré-vendas', 'CS'];
 import { User, Mail, Lock, Building2, Eye, EyeOff } from 'lucide-react';
 
 const Cadastro = ({ setUser }) => {
   const navigate = useNavigate();
-  const API = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) || 'http://localhost:8000/api';
+  const API = getApiBase();
   const [formData, setFormData] = useState({
     nome: '',
     sobrenome: '',
@@ -19,8 +20,8 @@ const Cadastro = ({ setUser }) => {
   const [loading, setLoading] = useState(false);
 
   const validateEmail = (email) => {
-    if (email && !email.endsWith('@pronutrition.com.br')) {
-      setEmailError('Email deve ser corporativo (@pronutrition.com.br)');
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setEmailError('E-mail inválido');
       return false;
     }
     setEmailError('');
@@ -38,6 +39,10 @@ const Cadastro = ({ setUser }) => {
     setLoading(true);
 
     try {
+      if (!API) {
+        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+        return;
+      }
       const res = await fetch(`${API}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -209,7 +214,7 @@ const Cadastro = ({ setUser }) => {
                   type="email"
                   required
                   className="input-pronutrition pl-10"
-                  placeholder="seu.email@pronutrition.com.br"
+                  placeholder="seu.email@dominio.com"
                   value={formData.email}
                   onChange={handleChange}
                   style={{ 
