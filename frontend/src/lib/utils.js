@@ -12,6 +12,7 @@ export function getApiBase() {
     || (typeof window !== 'undefined' && window.__ENV__?.VITE_API_URL)
     || '';
   if (!v) return '';
-  const base = String(v).replace(/\/$/, '');
+  let base = String(v).replace(/\/$/, '');
+  if (!/\/api$/.test(base)) base = `${base}/api`;
   return base;
 }
