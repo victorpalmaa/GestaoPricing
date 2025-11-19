@@ -17,10 +17,11 @@ import {
   AlertTriangle,
   Info
 } from 'lucide-react';
+import { getApiBase } from '@/lib/utils';
 
 const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true, canDelete: true }, title = 'Leads' }) => {
   const navigate = useNavigate();
-  const API = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) || 'http://localhost:8000/api';
+  const API = getApiBase();
   const getToken = () => localStorage.getItem('pronutrition_token') || sessionStorage.getItem('pronutrition_token');
   const [leads, setLeads] = useState([]);
   const [filteredLeads, setFilteredLeads] = useState([]);
@@ -75,6 +76,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     const token = getToken();
     if (!token) {
       navigate('/login');
+      return;
+    }
+    if (!API) {
+      setAlert({ show: true, message: 'Configuração ausente: defina VITE_API_URL no Vercel', type: 'info' });
       return;
     }
     fetch(`${API}/prices`, {
@@ -219,7 +224,12 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         })
       })
         .then(async (res) => {
-          if (!res.ok) throw new Error('Falha ao atualizar');
+          if (!res.ok) {
+            const t = await res.text();
+            let msg = 'Falha ao atualizar';
+            try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
+            throw new Error(msg);
+          }
           return res.json();
         })
         .then((updated) => {
@@ -227,7 +237,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           showAlert('Lead atualizado com sucesso', 'success');
         })
         .catch((e) => {
-          showAlert('Falha ao atualizar', 'error');
+          showAlert(e.message || 'Falha ao atualizar', 'error');
         });
     } else {
       const token = getToken();
@@ -246,7 +256,12 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         })
       })
         .then(async (res) => {
-          if (!res.ok) throw new Error('Falha ao criar');
+          if (!res.ok) {
+            const t = await res.text();
+            let msg = 'Falha ao criar';
+            try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
+            throw new Error(msg);
+          }
           return res.json();
         })
         .then((newLead) => {
@@ -256,7 +271,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           showAlert('Lead adicionado com sucesso', 'success');
         })
         .catch((e) => {
-          showAlert('Falha ao adicionar', 'error');
+          showAlert(e.message || 'Falha ao adicionar', 'error');
         });
     }
 

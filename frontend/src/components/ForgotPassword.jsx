@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getApiBase } from '@/lib/utils';
 import { Mail } from 'lucide-react';
 
 const ForgotPassword = () => {
@@ -16,7 +17,11 @@ const ForgotPassword = () => {
     setMessage('');
     setLoading(true);
     try {
-      const API = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) || 'http://localhost:8000/api';
+      const API = getApiBase();
+      if (!API) {
+        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+        return;
+      }
       const res = await fetch(`${API}/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -25,7 +30,7 @@ const ForgotPassword = () => {
       const data = await res.json();
       if (res.ok) {
         setMessage('Enviamos um e-mail para recuperar sua senha.');
-        setResetLink('');
+        setResetLink(data?.link || '');
       } else if (res.status === 404) {
         setError('Não há usuário com este e-mail cadastrado');
       } else {
@@ -71,6 +76,11 @@ const ForgotPassword = () => {
             {message && (
               <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>
+                {resetLink && (
+                  <p className="text-xs mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    Se preferir, use este link direto: <a href={resetLink} className="underline" style={{ color: 'var(--color-primary)' }}>Redefinir senha</a>
+                  </p>
+                )}
               </div>
             )}
             
