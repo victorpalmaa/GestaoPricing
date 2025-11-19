@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
- 
+import { getApiBase } from '@/lib/utils';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const Login = ({ setUser }) => {
   const navigate = useNavigate();
-  const API = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) || 'http://localhost:8000/api';
+  const API = getApiBase();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -21,9 +21,13 @@ const Login = ({ setUser }) => {
     setLoading(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
+      if (!API) {
+        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+        return;
+      }
       const res = await fetch(`${API}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

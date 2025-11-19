@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: gestaopricing-backend
+    env: python
+    plan: free
+    rootDirectory: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: SITE_URL
+        value: https://gestaopricing.vercel.app
+      - key: SUPABASE_RESET_REDIRECT
+        value: https://gestaopricing.vercel.app/update-password
+      - key: CORS_ORIGINS
+        value: https://gestaopricing.vercel.app
+      - key: CORS_ORIGIN_REGEX
+        value: https://.*\.vercel\.app$
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: ACCESS_TOKEN_EXPIRE_LONG_MINUTES
+        value: "43200"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: onboarding@resend.dev

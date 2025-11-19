@@ -2,6 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+import re
 from supabase import create_client, Client
 import os
 import logging
@@ -606,6 +607,7 @@ app.add_middleware(
     allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=os.environ.get("CORS_ORIGIN_REGEX") or r"https://.*\.vercel\.app$",
 )
 
 # Configure logging
