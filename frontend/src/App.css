@@ -1,0 +1,160 @@
+/* PRONUTRITION MVP - Estilos Globais */
+
+.App {
+  min-height: 100vh;
+  background-color: var(--color-bg-secondary);
+}
+
+/* Animações e transições suaves */
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Hover states para interatividade */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Focus states para acessibilidade */
+.focus-ring:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(132, 90, 250, 0.3);
+}
+
+/* Utility classes seguindo Brandbook */
+.card-pronutrition {
+  background-color: var(--color-bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 2rem;
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.btn-primary:hover {
+  background-color: #6d47d9;
+  transform: scale(1.02);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-success {
+  background-color: var(--color-success);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.btn-success:hover {
+  background-color: #52b819;
+  transform: scale(1.02);
+}
+
+.btn-danger {
+  background-color: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.btn-danger:hover {
+  background-color: #dc2626;
+  transform: scale(1.02);
+}
+
+.input-pronutrition {
+  width: 100%;
+  /* Evitar sobrescrever padding-left definido por utilitários (ex: pl-10) */
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+  padding-right: 1rem;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-main);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input-pronutrition:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(132, 90, 250, 0.1);
+}
+
+.input-pronutrition::placeholder {
+  color: var(--color-text-muted);
+}
+
+.label-pronutrition {
+  display: block;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+
+/* Cash animation */
+@keyframes cashFloat {
+  0% { opacity: 0; transform: translateY(100vh) translateX(-20px) scale(0.8); }
+  10% { opacity: 1; }
+  50% { transform: translateY(0) translateX(20px) scale(1.0); }
+  100% { opacity: 0; transform: translateY(-20vh) translateX(-10px) scale(1.15); }
+}
+.cash-animation-container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.cash-icon {
+  position: absolute;
+  opacity: 0;
+  animation-name: cashFloat;
+  animation-timing-function: ease-in-out;
+  animation-fill-mode: forwards;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.25));
+}
