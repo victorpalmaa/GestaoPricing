@@ -23,7 +23,7 @@ const SessionSelect = ({ user }) => {
           <div>
             <h1 className="text-3xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>Escolha a sessão</h1>
             <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              Bem-vindo, {user?.nome || user?.user_metadata?.nome} {user?.sobrenome || user?.user_metadata?.sobrenome}
+              Bem-vindo, {user?.nome || user?.user_metadata?.nome}
             </p>
           </div>
         </div>
