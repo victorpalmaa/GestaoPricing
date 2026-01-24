@@ -4,8 +4,9 @@ import Dashboard from './Dashboard';
 
 const PreVendas = ({ user, setUser }) => {
   const navigate = useNavigate();
-  const isSuper = user?.area === 'Pricing';
-  const canEdit = isSuper || user?.area === 'Pré-vendas';
+  const userArea = user?.area || user?.user_metadata?.area;
+  const isSuper = userArea === 'Pricing';
+  const canEdit = isSuper || userArea === 'Pré-vendas';
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
       <div className="max-w-[110rem] mx-auto px-6 py-2">

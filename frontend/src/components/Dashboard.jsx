@@ -384,7 +384,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   {user?.nome} {user?.sobrenome}
                 </p>
                 <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                  {user?.area}
+                  {user?.area || user?.user_metadata?.area}
                 </p>
               </div>
               <button

@@ -11,23 +11,81 @@ import CS from "./components/CS";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
 import { Toaster } from "./components/ui/sonner";
+import { supabase } from "@/lib/utils";
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Verificar se há usuário salvo no localStorage ou sessionStorage
-    const savedUser = localStorage.getItem('pronutrition_user') || sessionStorage.getItem('pronutrition_user');
-    if (savedUser) {
+    const checkSession = async () => {
       try {
-        setUser(JSON.parse(savedUser));
-      } catch (e) {
-        console.error('Erro ao carregar usuário:', e);
-        localStorage.removeItem('pronutrition_user');
+        // 1. Verificar preferência de "Lembrar de mim"
+        const remember = localStorage.getItem('pronutrition_remember') === 'true';
+        const sessionUser = sessionStorage.getItem('pronutrition_user');
+
+        // 2. Verificar sessão real do Supabase
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          // Sessão válida no Supabase
+          if (remember) {
+            // Se "Lembrar" está ativo, mantemos logado
+            setUser(session.user);
+            // Atualizar localStorage se necessário
+            if (!localStorage.getItem('pronutrition_user')) {
+              localStorage.setItem('pronutrition_user', JSON.stringify(session.user));
+            }
+          } else {
+            // Se "Lembrar" NÃO está ativo
+            if (sessionUser) {
+               // Se temos sessionStorage (mesma aba), mantemos logado
+               setUser(session.user);
+            } else {
+               // Se não temos sessionStorage (nova aba/fechou navegador), forçamos logout
+               // pois o Supabase persiste por padrão, mas o usuário escolheu não lembrar.
+               await supabase.auth.signOut();
+               setUser(null);
+            }
+          }
+        } else {
+          // Sem sessão Supabase válida
+          setUser(null);
+          // Limpar dados obsoletos
+          localStorage.removeItem('pronutrition_user');
+          localStorage.removeItem('pronutrition_token');
+          sessionStorage.removeItem('pronutrition_user');
+          sessionStorage.removeItem('pronutrition_token');
+        }
+      } catch (error) {
+        console.error('Erro ao verificar sessão:', error);
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-    }
-    setLoading(false);
+    };
+
+    checkSession();
+
+    // Listener para mudanças de estado (login/logout em outras abas ou expiração)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        setUser(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        localStorage.removeItem('pronutrition_user');
+        localStorage.removeItem('pronutrition_token');
+        // Não removemos 'pronutrition_remember' aqui automaticamente, 
+        // pois o usuário pode querer ser lembrado no próximo login, 
+        // mas se foi SIGNED_OUT explícito pelo botão de sair, o Login.jsx deve tratar isso.
+        // Geralmente Logout explícito deve limpar tudo.
+        sessionStorage.clear();
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   if (loading) {

@@ -10,7 +10,7 @@ const SessionSelect = ({ user }) => {
     { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
   ];
   const subtitleFor = (key) => {
-    const area = user?.area;
+    const area = user?.area || user?.user_metadata?.area;
     if (area === 'Pricing') return 'Acessar e gerenciar';
     if (area === 'Pré-vendas') return key === 'pre-vendas' ? 'Acessar e gerenciar' : 'Acessar';
     if (area === 'CS') return key === 'cs' ? 'Acessar e gerenciar' : 'Acessar';

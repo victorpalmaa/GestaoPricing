@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 
 const CS = ({ user }) => {
   const navigate = useNavigate();
-  const canEdit = user?.area === 'CS';
+  const userArea = user?.area || user?.user_metadata?.area;
+  const canEdit = userArea === 'CS';
   return (
     <div className="min-h-screen py-12 px-6" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
       <div className="max-w-4xl mx-auto">
