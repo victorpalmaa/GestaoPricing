@@ -23,7 +23,7 @@ export function getSupabaseUrl() {
     || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL)
     || (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL)
     || (typeof window !== 'undefined' && window.__ENV__?.VITE_SUPABASE_URL)
-    || '';
+    || 'https://ptqptbsslyvytnnrgvqp.supabase.co';
 }
 
 export function getSupabaseAnonKey() {
@@ -31,7 +31,7 @@ export function getSupabaseAnonKey() {
     || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY)
     || (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY)
     || (typeof window !== 'undefined' && window.__ENV__?.VITE_SUPABASE_ANON_KEY)
-    || '';
+    || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB0cXB0YnNzbHl2eXRubnJndnFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5MzM5NDEsImV4cCI6MjA3ODUwOTk0MX0.SvcC4lnQtt_ejE8dFxJQUVar9VF86rTcPDS5BfFNPoI';
 }
 
 const SUPABASE_URL = String(getSupabaseUrl() || '').trim();
