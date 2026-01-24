@@ -6,7 +6,7 @@ const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
   const cards = [
     { key: 'pricing', title: 'Pricing', icon: Briefcase, to: '/pricing' },
-    { key: 'pre-vendas', title: 'Pre Sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
+    { key: 'pre-vendas', title: 'Pré-sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
     { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
   ];
   const subtitleFor = (key) => {
@@ -22,7 +22,7 @@ const SessionSelect = ({ user }) => {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>Escolha a sessão</h1>
-            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>Bem-vindo, {user?.nome}</p>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>Bem-vindo, {user?.nome} {user?.sobrenome}</p>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

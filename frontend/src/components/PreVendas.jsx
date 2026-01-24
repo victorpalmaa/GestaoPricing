@@ -19,7 +19,7 @@ const PreVendas = ({ user, setUser }) => {
             Voltar
           </button>
         </div>
-        <Dashboard user={user} setUser={setUser} permissions={{ canAdd: canEdit, canEdit: canEdit, canDelete: canEdit }} title="Pre Sales" />
+        <Dashboard user={user} setUser={setUser} permissions={{ canAdd: canEdit, canEdit: canEdit, canDelete: canEdit }} title="Pré-sales" />
       </div>
     </div>
   );
