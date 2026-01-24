@@ -22,7 +22,9 @@ const SessionSelect = ({ user }) => {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>Escolha a sessão</h1>
-            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>Bem-vindo, {user?.nome} {user?.sobrenome}</p>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Bem-vindo, {user?.nome || user?.user_metadata?.nome} {user?.sobrenome || user?.user_metadata?.sobrenome}
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

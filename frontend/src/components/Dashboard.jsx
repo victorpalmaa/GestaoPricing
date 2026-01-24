@@ -381,7 +381,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                  {user?.nome} {user?.sobrenome}
+                  {user?.nome || user?.user_metadata?.nome} {user?.sobrenome || user?.user_metadata?.sobrenome}
                 </p>
                 <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                   {user?.area || user?.user_metadata?.area}
