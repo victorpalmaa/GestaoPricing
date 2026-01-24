@@ -38,7 +38,7 @@ dist
 .env.*
 **/.env
 **/.env.*
-frontend/.env
+frontend/.env.local
 backend/.env
 
 # Logs and debug files
