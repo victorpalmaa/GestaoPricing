@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getApiBase } from '@/lib/utils';
+import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
 import { Mail } from 'lucide-react';
 
 const ForgotPassword = () => {
@@ -17,24 +17,31 @@ const ForgotPassword = () => {
     setMessage('');
     setLoading(true);
     try {
-      const API = getApiBase();
-      if (!API) {
-        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+      const SUPABASE_URL = getSupabaseUrl();
+      const SUPABASE_ANON_KEY = getSupabaseAnonKey();
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !supabase) {
+        setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
         return;
       }
-      const res = await fetch(`${API}/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage('Enviamos um e-mail para recuperar sua senha.');
-        setResetLink(data?.link || '');
-      } else if (res.status === 404) {
-        setError('Não há usuário com este e-mail cadastrado');
+      const redirect = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_REDIRECT_URL)
+        || `${window.location.origin}/update-password`;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirect });
+      if (resetError) {
+        console.error('Reset password error:', resetError);
+        let msg = resetError.message || 'Não foi possível enviar o e-mail.';
+        
+        if (/rate limit/i.test(msg) || /too many requests/i.test(msg)) {
+          msg = 'Limite de tentativas excedido (Rate Limit do Supabase). Aguarde alguns minutos ou use outro e-mail.';
+        } else if (/not confirmed/i.test(msg)) {
+          msg = 'E-mail não confirmado. Verifique sua caixa de entrada.';
+        } else if (/SMTP|mail/i.test(msg)) {
+          msg = `Erro de envio (SMTP/Limite). Detalhe: ${msg}`;
+        }
+        
+        setError(msg);
       } else {
-        setError(data?.detail || 'Não foi possível enviar o e-mail.');
+        setMessage('Enviamos um e-mail para recuperar sua senha.');
+        setResetLink('');
       }
     } catch (err) {
       setError('Erro de rede. Tente novamente.');

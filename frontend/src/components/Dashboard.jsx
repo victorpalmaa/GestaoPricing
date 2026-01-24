@@ -13,15 +13,16 @@ import {
   TrendingUp,
   BarChart3,
   Filter,
+  Download,
   CheckCircle,
   AlertTriangle,
   Info
 } from 'lucide-react';
-import { getApiBase } from '@/lib/utils';
+import * as XLSX from 'xlsx';
+import { supabase } from '@/lib/utils';
 
 const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true, canDelete: true }, title = 'Leads' }) => {
   const navigate = useNavigate();
-  const API = getApiBase();
   const getToken = () => localStorage.getItem('pronutrition_token') || sessionStorage.getItem('pronutrition_token');
   const [leads, setLeads] = useState([]);
   const [filteredLeads, setFilteredLeads] = useState([]);
@@ -41,6 +42,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [sortDir, setSortDir] = useState('');
   const [showMoreMetrics, setShowMoreMetrics] = useState(false);
   const [alert, setAlert] = useState({ show: false, message: '', type: 'info' });
+  const [initialLoading, setInitialLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const showAlert = (message, type = 'info') => {
     setAlert({ show: true, message, type });
@@ -73,34 +76,34 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   };
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      navigate('/login');
-      return;
-    }
-    if (!API) {
-      setAlert({ show: true, message: 'Configuração ausente: defina VITE_API_URL no Vercel', type: 'info' });
-      return;
-    }
-    fetch(`${API}/prices`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(async (res) => {
-        if (res.status === 401) {
-          navigate('/login');
-          return [];
-        }
-        if (!res.ok) throw new Error('Falha ao carregar preços');
-        return res.json();
-      })
-      .then((data) => {
-        setLeads(data || []);
-        setFilteredLeads(data || []);
-      })
-      .catch(() => {
+    (async () => {
+      setInitialLoading(true);
+      const { data, error } = await supabase
+        .from('prices')
+        .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat')
+        .order('createdat', { ascending: false });
+      if (error) {
         setLeads([]);
         setFilteredLeads([]);
-      });
+        toast.error('Falha ao carregar preços');
+      } else {
+        const mapped = (data || []).map(r => ({
+          id: r.id,
+          cliente: r.cliente,
+          sku: r.sku,
+          pricingId: r.pricingid,
+          precoLiquido: r.precoliquido,
+          precoBruto: r.precobruto,
+          margemBruta: r.margembruta,
+          volume: r.volume,
+          status: r.status,
+          createdAt: r.createdat,
+        }));
+        setLeads(mapped);
+        setFilteredLeads(mapped);
+      }
+      setInitialLoading(false);
+    })();
   }, []);
 
   useEffect(() => {
@@ -157,6 +160,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       sessionStorage.removeItem('pronutrition_user');
       sessionStorage.removeItem('pronutrition_token');
     } catch {}
+    try { supabase.auth.signOut(); } catch {}
     setUser(null);
     navigate('/login');
   };
@@ -197,6 +201,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setIsSubmitting(true);
     
     const leadData = {
       ...formData,
@@ -208,74 +213,88 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     };
 
     if (editingLead) {
-      const token = getToken();
-      fetch(`${API}/prices/${editingLead.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          cliente: leadData.cliente,
-          sku: leadData.sku,
-          pricingId: leadData.pricingId,
-          precoLiquido: leadData.precoLiquido,
-          precoBruto: leadData.precoBruto,
-          margemBruta: leadData.margemBruta,
-          volume: leadData.volume,
-          status: leadData.status
-        })
-      })
-        .then(async (res) => {
-          if (!res.ok) {
-            const t = await res.text();
-            let msg = 'Falha ao atualizar';
-            try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
-            throw new Error(msg);
-          }
-          return res.json();
-        })
-        .then((updated) => {
+      (async () => {
+        const { data: updatedRows, error } = await supabase
+          .from('prices')
+          .update({
+            cliente: leadData.cliente,
+            sku: leadData.sku,
+            pricingid: leadData.pricingId,
+            precoliquido: leadData.precoLiquido,
+            precobruto: leadData.precoBruto,
+            margembruta: leadData.margemBruta,
+            volume: leadData.volume,
+            status: leadData.status
+          })
+          .eq('id', editingLead.id)
+          .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+        if (error) {
+          showAlert(error.message || 'Falha ao atualizar', 'error');
+          toast.error('Falha ao atualizar');
+        } else {
+          const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+          const updated = {
+            id: r.id,
+            cliente: r.cliente,
+            sku: r.sku,
+            pricingId: r.pricingid,
+            precoLiquido: r.precoliquido,
+            precoBruto: r.precobruto,
+            margemBruta: r.margembruta,
+            volume: r.volume,
+            status: r.status,
+            createdAt: r.createdat,
+          };
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
           showAlert('Lead atualizado com sucesso', 'success');
-        })
-        .catch((e) => {
-          showAlert(e.message || 'Falha ao atualizar', 'error');
-        });
+          toast.success('Lead atualizado');
+        }
+      })();
     } else {
-      const token = getToken();
-      fetch(`${API}/prices`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          cliente: leadData.cliente,
-          sku: leadData.sku,
-          pricingId: leadData.pricingId,
-          precoLiquido: leadData.precoLiquido,
-          precoBruto: leadData.precoBruto,
-          margemBruta: leadData.margemBruta,
-          volume: leadData.volume,
-          status: leadData.status
-        })
-      })
-        .then(async (res) => {
-          if (!res.ok) {
-            const t = await res.text();
-            let msg = 'Falha ao criar';
-            try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
-            throw new Error(msg);
-          }
-          return res.json();
-        })
-        .then((newLead) => {
+      (async () => {
+        const { data: insertedRows, error } = await supabase
+          .from('prices')
+          .insert([
+            {
+              cliente: leadData.cliente,
+              sku: leadData.sku,
+              pricingid: leadData.pricingId,
+              precoliquido: leadData.precoLiquido,
+              precobruto: leadData.precoBruto,
+              margembruta: leadData.margemBruta,
+              volume: leadData.volume,
+              status: leadData.status
+            }
+          ])
+          .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+        if (error) {
+          showAlert(error.message || 'Falha ao adicionar', 'error');
+          toast.error('Falha ao adicionar');
+        } else {
+          const r = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
+          const newLead = {
+            id: r.id,
+            cliente: r.cliente,
+            sku: r.sku,
+            pricingId: r.pricingid,
+            precoLiquido: r.precoliquido,
+            precoBruto: r.precobruto,
+            margemBruta: r.margembruta,
+            volume: r.volume,
+            status: r.status,
+            createdAt: r.createdat,
+          };
           setLeads([newLead, ...leads]);
           setShowMoney(true);
-          setTimeout(() => setShowMoney(false), 3000)
+          setTimeout(() => setShowMoney(false), 3000);
           showAlert('Lead adicionado com sucesso', 'success');
-        })
-        .catch((e) => {
-          showAlert(e.message || 'Falha ao adicionar', 'error');
-        });
+          toast.success('Lead adicionado');
+        }
+      })();
     }
 
     closeModal();
+    setIsSubmitting(false);
   };
 
   const handleDelete = (id) => {
@@ -285,22 +304,21 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
   const confirmDelete = () => {
     if (leadToDelete) {
-      const token = getToken();
-      fetch(`${API}/prices/${leadToDelete}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(async (res) => {
-          if (!res.ok) throw new Error('Falha ao excluir');
-        })
-        .then(() => {
+      (async () => {
+        const { error } = await supabase
+          .from('prices')
+          .delete()
+          .eq('id', leadToDelete);
+        if (error) {
+          showAlert('Falha ao excluir', 'error');
+          toast.error('Falha ao excluir');
+        } else {
           setLeads(leads.filter(l => l.id !== leadToDelete));
           setLeadToDelete(null);
           showAlert('Lead excluído com sucesso', 'danger');
-        })
-        .catch(() => {
-          showAlert('Falha ao excluir', 'error');
-        });
+          toast.success('Lead excluído');
+        }
+      })();
     }
     setIsConfirmOpen(false);
   };
@@ -311,6 +329,25 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       ...prev,
       [name]: value
     }));
+  };
+
+  const exportToExcel = () => {
+    const dataToExport = filteredLeads.map(l => ({
+      'Cliente': l.cliente,
+      'SKU': l.sku,
+      'Precificacao': l.pricingId,
+      'PrecoLiquido': l.precoLiquido,
+      'PrecoBruto': l.precoBruto,
+      'MargemBruta': l.margemBruta,
+      'Volume': l.volume,
+      'Status': l.status || 'em_aberto',
+      'Data': new Date(l.createdAt).toLocaleDateString('pt-BR')
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pre Vendas");
+    XLSX.writeFile(wb, "pre-vendas.xlsx");
   };
 
   return (
@@ -546,22 +583,31 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
             {/* Actions */}
             <div className="relative flex items-center space-x-2">
-              {permissions.canAdd && (
-                <button
-                  onClick={() => openModal()}
-                  className="btn-primary flex items-center space-x-2"
-                >
-                  <Plus size={20} />
-                  <span>Adicionar Novo Preço</span>
-                </button>
-              )}
+              <button
+                onClick={() => openModal()}
+                className="btn-primary flex items-center space-x-2"
+                style={{ transition: 'transform 0.15s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                <Plus size={20} />
+                <span>Adicionar Novo Preço</span>
+              </button>
               <button
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className="px-3 py-2 rounded-lg font-semibold transition-colors"
+                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100"
                 style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
                 title="Filtros"
               >
                 <Filter size={18} style={{ transition: 'transform 0.2s ease', transform: isFilterOpen ? 'rotate(90deg) scale(1.05)' : 'rotate(0deg)' }} />
+              </button>
+              <button
+                onClick={exportToExcel}
+                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100"
+                style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                title="Exportar CSV"
+              >
+                <Download size={18} />
               </button>
               {isFilterOpen && (
                 <>
@@ -655,6 +701,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
         {/* Table */}
         <div className="card-pronutrition" style={{ padding: 0, overflow: 'visible' }}>
+          {initialLoading && (
+            <div className="px-6 py-4">
+              <p style={{ color: 'var(--color-text-secondary)' }}>Carregando dados...</p>
+            </div>
+          )}
           <div className="overflow-x-hidden" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
             <table className="w-full">
               <thead style={{ backgroundColor: 'var(--color-bg-secondary)', borderBottom: '2px solid var(--color-primary)' }}>
@@ -839,26 +890,30 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                       className="w-full px-3 py-2 rounded-lg hover:bg-gray-100 text-left"
                                       style={{ color: opt.color }}
                                       onClick={() => {
-                                        const token = getToken();
-                                        fetch(`${API}/prices/${lead.id}`, {
-                                          method: 'PUT',
-                                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                                          body: JSON.stringify({
-                                            cliente: lead.cliente,
-                                            sku: lead.sku,
-                                            pricingId: lead.pricingId || '',
-                                            precoLiquido: lead.precoLiquido,
-                                            precoBruto: lead.precoBruto,
-                                            margemBruta: lead.margemBruta,
-                                            volume: lead.volume,
-                                            status: opt.key
-                                          })
-                                        })
-                                          .then(async (res) => {
-                                            if (!res.ok) throw new Error('Falha ao atualizar status');
-                                            return res.json();
-                                          })
-                                          .then((updated) => {
+                                        (async () => {
+                                          const { data: updatedRows, error } = await supabase
+                                            .from('prices')
+                                            .update({ status: opt.key })
+                                            .eq('id', lead.id)
+                                            .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+                                          if (error) {
+                                            setStatusMenuOpen(null);
+                                            showAlert('Falha ao atualizar status', 'error');
+                                            toast.error('Falha ao atualizar status');
+                                          } else {
+                                            const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+                                            const updated = {
+                                              id: r.id,
+                                              cliente: r.cliente,
+                                              sku: r.sku,
+                                              pricingId: r.pricingid,
+                                              precoLiquido: r.precoliquido,
+                                              precoBruto: r.precobruto,
+                                              margemBruta: r.margembruta,
+                                              volume: r.volume,
+                                              status: r.status,
+                                              createdAt: r.createdat,
+                                            };
                                             setLeads(leads.map(l => l.id === lead.id ? updated : l));
                                             if (opt.key === 'aprovado') {
                                               setShowMoney(true);
@@ -866,11 +921,9 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                             }
                                             setStatusMenuOpen(null);
                                             showAlert('Status atualizado com sucesso', 'success');
-                                          })
-                                          .catch(() => {
-                                            setStatusMenuOpen(null);
-                                            showAlert('Falha ao atualizar status', 'error');
-                                          });
+                                            toast.success('Status atualizado');
+                                          }
+                                        })();
                                       }}
                                     >
                                       {opt.label}
@@ -1130,8 +1183,9 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 <button
                   type="submit"
                   className="btn-primary"
+                  disabled={isSubmitting}
                 >
-                  {editingLead ? 'Salvar Alterações' : 'Adicionar Preço'}
+                  {isSubmitting ? (editingLead ? 'Salvando...' : 'Adicionando...') : (editingLead ? 'Salvar Alterações' : 'Adicionar Preço')}
                 </button>
               </div>
             </form>

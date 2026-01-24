@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { supabase } from '@/lib/utils';
 
 const UpdatePassword = () => {
   const navigate = useNavigate();
@@ -40,20 +41,12 @@ const UpdatePassword = () => {
     setMessage('');
     setLoading(true);
     try {
-      if (!token) throw new Error('Token de recuperação ausente');
-      const API = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) || 'http://localhost:8000/api';
-      const res = await fetch(`${API}/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, token, new_password: password })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage('Senha atualizada com sucesso. Faça login novamente.');
-        setTimeout(() => navigate('/login'), 2000);
-      } else {
-        throw new Error(data?.detail || 'Falha ao atualizar senha');
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) {
+        throw new Error(updateError.message || 'Falha ao atualizar senha');
       }
+      setMessage('Senha atualizada com sucesso. Faça login novamente.');
+      setTimeout(() => navigate('/login'), 2000);
     } catch (err) {
       setError(err.message || 'Erro ao atualizar senha');
     } finally {

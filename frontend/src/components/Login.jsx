@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getApiBase } from '@/lib/utils';
+import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const Login = ({ setUser }) => {
   const navigate = useNavigate();
-  const API = getApiBase();
+  const SUPABASE_URL = getSupabaseUrl();
+  const SUPABASE_ANON_KEY = getSupabaseAnonKey();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -20,45 +21,39 @@ const Login = ({ setUser }) => {
     setError('');
     setLoading(true);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
     try {
-      if (!API) {
-        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !supabase) {
+        setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
         return;
       }
-      const res = await fetch(`${API}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email, password: formData.password, remember: formData.rememberMe }),
-        signal: controller.signal
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password
       });
-      clearTimeout(timeoutId);
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || 'Credenciais inválidas');
+      if (authError || !data?.user || !data?.session) {
+        const msg = (
+          /invalid login credentials/i.test(authError?.message || '') ? 'Credenciais inválidas' :
+          /email not confirmed|not confirmed/i.test(authError?.message || '') ? 'E-mail não confirmado. Verifique seu e-mail e tente novamente.' :
+          /rate limit/i.test(authError?.message || '') ? 'Muitas tentativas. Aguarde um momento.' :
+          authError?.message || 'Não foi possível autenticar'
+        );
+        throw new Error(msg);
       }
-      const data = await res.json();
       setUser(data.user);
       if (formData.rememberMe) {
         localStorage.setItem('pronutrition_user', JSON.stringify(data.user));
-        localStorage.setItem('pronutrition_token', data.token.access_token);
+        localStorage.setItem('pronutrition_token', data.session.access_token);
         localStorage.setItem('pronutrition_remember', 'true');
       } else {
         sessionStorage.setItem('pronutrition_user', JSON.stringify(data.user));
-        sessionStorage.setItem('pronutrition_token', data.token.access_token);
+        sessionStorage.setItem('pronutrition_token', data.session.access_token);
         localStorage.removeItem('pronutrition_remember');
         localStorage.removeItem('pronutrition_user');
         localStorage.removeItem('pronutrition_token');
       }
       navigate('/select');
     } catch (err) {
-      if (err.name === 'AbortError') {
-        setError('Tempo limite atingido. Verifique a conexão.');
-      } else {
-        setError('Credenciais inválidas');
-      }
+      setError(err.message || 'Credenciais inválidas');
     } finally {
       setLoading(false);
     }

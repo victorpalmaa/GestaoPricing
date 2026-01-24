@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getApiBase } from '@/lib/utils';
+import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
 const allowedAreas = ['Pricing', 'Pré-vendas', 'CS'];
 import { User, Mail, Lock, Building2, Eye, EyeOff } from 'lucide-react';
 
 const Cadastro = ({ setUser }) => {
   const navigate = useNavigate();
-  const API = getApiBase();
+  const SUPABASE_URL = getSupabaseUrl();
+  const SUPABASE_ANON_KEY = getSupabaseAnonKey();
   const [formData, setFormData] = useState({
     nome: '',
     sobrenome: '',
@@ -39,44 +40,33 @@ const Cadastro = ({ setUser }) => {
     setLoading(true);
 
     try {
-      if (!API) {
-        setError('Configuração ausente: defina VITE_API_URL no Vercel');
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !supabase) {
+        setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
         return;
       }
-      const res = await fetch(`${API}/users/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nome: formData.nome,
-          sobrenome: formData.sobrenome,
-          email: formData.email,
-          area: formData.area,
-          password: formData.password
-        })
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            nome: formData.nome,
+            sobrenome: formData.sobrenome,
+            area: formData.area
+          }
+        }
       });
-      if (!res.ok) {
-        const t = await res.text();
-        let msg = 'Falha ao cadastrar';
-        try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
-        throw new Error(msg);
+      if (signUpError) {
+        throw new Error(signUpError.message || 'Falha ao cadastrar');
       }
-
-      const loginRes = await fetch(`${API}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email, password: formData.password })
-      });
-      if (!loginRes.ok) {
-        const t = await loginRes.text();
-        let msg = 'Falha ao autenticar';
-        try { const j = JSON.parse(t); if (j?.detail) msg = j.detail; } catch {}
-        throw new Error(msg);
+      if (signUpData?.session && signUpData?.user) {
+        setUser(signUpData.user);
+        localStorage.setItem('pronutrition_user', JSON.stringify(signUpData.user));
+        localStorage.setItem('pronutrition_token', signUpData.session.access_token);
+        navigate('/select');
+        return;
       }
-      const auth = await loginRes.json();
-      setUser(auth.user);
-      localStorage.setItem('pronutrition_user', JSON.stringify(auth.user));
-      localStorage.setItem('pronutrition_token', auth.token.access_token);
-      navigate('/select');
+      setUser(null);
+      setError('Cadastro criado. Verifique seu e-mail para confirmar.');
     } catch (err) {
       setError(err.message || 'Erro ao cadastrar');
     } finally {

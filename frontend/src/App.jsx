@@ -10,6 +10,7 @@ import PreVendas from "./components/PreVendas";
 import CS from "./components/CS";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
+import { Toaster } from "./components/ui/sonner";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -47,6 +48,7 @@ function App() {
   return (
     <div className="App">
       <BrowserRouter>
+        <Toaster />
         <Routes>
           <Route 
             path="/login" 
