@@ -32,8 +32,8 @@ const PricingDashboard = ({ user }) => {
     category: '',
     subcategory: '',
     size: '',
-    dateFrom: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
-    dateTo: format(new Date(), 'yyyy-MM-dd'),
+    dateFrom: '',
+    dateTo: '',
     datasulCode: ''
   });
   const [showNewPriceModal, setShowNewPriceModal] = useState(false);

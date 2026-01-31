@@ -26,8 +26,8 @@ const PricingAnalytics = ({ user, setUser }) => {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
-    start: format(subDays(new Date(), 365), 'yyyy-MM-dd'),
-    end: format(new Date(), 'yyyy-MM-dd')
+    start: '',
+    end: ''
   });
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedSKU, setSelectedSKU] = useState('');
