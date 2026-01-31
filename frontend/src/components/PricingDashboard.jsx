@@ -383,7 +383,7 @@ const PricingDashboard = ({ user }) => {
                    'julho': 6, 'agosto': 7, 'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11
                  };
                  
-                 const parts = monthStr.toLowerCase().split(/[-/ ]/);
+                 const parts = monthStr.toLowerCase().split(/[-/ .]/);
                  if (parts.length >= 2) {
                    const monthPart = parts[0].substring(0, 3); // pegar 3 primeiras letras
                    let monthIndex = -1;
