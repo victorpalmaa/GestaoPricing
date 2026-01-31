@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cn } from '@/lib/utils';
-import { ArrowLeft, TrendingUp, DollarSign, Users, Package, BarChart3, Calendar, Filter, Search, Check, ChevronsUpDown, X } from 'lucide-react';
+import { ArrowLeft, TrendingUp, DollarSign, Users, Package, BarChart3, Calendar, Filter, Search, Check, ChevronsUpDown, X, Scale } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -257,6 +257,41 @@ const PricingAnalytics = ({ user, setUser }) => {
     const currentCurrency = safePricingData.length > 0 ? safePricingData[0].currency : 'BRL';
     const currencySymbol = currentCurrency === 'USD' ? '$' : 'R$';
 
+    // Benchmarking Interno
+    let benchmarkData = null;
+    if (selectedCategory) {
+      // 1. Média Geral da Categoria (Market Average)
+      const categoryItems = pricingData.filter(item => item.category === selectedCategory);
+      const categoryAvgMargin = categoryItems.length > 0 
+        ? categoryItems.reduce((sum, item) => sum + (Number(item.margin_budget) || 0), 0) / categoryItems.length 
+        : 0;
+
+      // 2. Média do Cliente Selecionado na Categoria (Client Average)
+      let clientAvgMargin = 0;
+      let clientName = 'Cliente';
+      
+      if (selectedClient) {
+        const clientItems = categoryItems.filter(item => item.client_id === selectedClient);
+        clientAvgMargin = clientItems.length > 0
+          ? clientItems.reduce((sum, item) => sum + (Number(item.margin_budget) || 0), 0) / clientItems.length
+          : 0;
+        clientName = clients.find(c => c.id === selectedClient)?.name || 'Cliente';
+      } else {
+        // Se não tiver cliente selecionado, usa a média filtrada atual (que pode ser de um subconjunto ou tudo)
+        clientAvgMargin = safePricingData.length > 0
+          ? safePricingData.reduce((sum, item) => sum + (Number(item.margin_budget) || 0), 0) / safePricingData.length
+          : 0;
+        clientName = 'Seleção Atual';
+      }
+
+      benchmarkData = {
+        categoryAvg: categoryAvgMargin,
+        clientAvg: clientAvgMargin,
+        diff: clientAvgMargin - categoryAvgMargin,
+        clientName
+      };
+    }
+
     return {
       evolutionData,
       topClients,
@@ -267,9 +302,10 @@ const PricingAnalytics = ({ user, setUser }) => {
       lastPriceDate: safePricingData.length > 0 ? format(new Date(Math.max(...safePricingData.map(d => new Date(d.date)))), 'dd/MM/yyyy') : '-',
       avgPrice: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.net_price || 0), 0) / safePricingData.length).toFixed(2) : 0,
       avgMargin: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.margin_budget || 0), 0) / safePricingData.length).toFixed(1) : 0,
-      currencySymbol
+      currencySymbol,
+      benchmarkData
     };
-  }, [filteredPricingData]);
+  }, [filteredPricingData, pricingData, selectedCategory, selectedClient, clients]);
 
   // Cores para gráficos
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
@@ -519,6 +555,41 @@ const PricingAnalytics = ({ user, setUser }) => {
             </div>
           </div>
         </div>
+
+        {/* Benchmarking Interno Card */}
+        {chartData.benchmarkData && (
+          <div className="bg-white rounded-lg p-6 shadow-sm mb-8 card-pronutrition hover-lift">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+              <Scale size={20} className="text-blue-600" />
+              Benchmarking Interno de Margens
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
+                <p className="text-sm text-gray-500 mb-1">Média da Categoria ({selectedCategory || 'Todas'})</p>
+                <p className="text-2xl font-bold text-gray-800">{chartData.benchmarkData.categoryAvg.toFixed(1)}%</p>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
+                <p className="text-sm text-gray-500 mb-1">Média {chartData.benchmarkData.clientName}</p>
+                <p className="text-2xl font-bold text-gray-800">{chartData.benchmarkData.clientAvg.toFixed(1)}%</p>
+              </div>
+
+              <div className={`p-4 rounded-lg border ${chartData.benchmarkData.diff >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                <p className={`text-sm mb-1 ${chartData.benchmarkData.diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  Diferencial Competitivo
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className={`text-2xl font-bold ${chartData.benchmarkData.diff >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    {chartData.benchmarkData.diff > 0 ? '+' : ''}{chartData.benchmarkData.diff.toFixed(1)}%
+                  </span>
+                  <span className={`text-sm px-2 py-1 rounded-full ${chartData.benchmarkData.diff >= 0 ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
+                    {chartData.benchmarkData.diff >= 0 ? 'Acima da Média' : 'Abaixo da Média'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Gráficos de Evolução */}
         <div className="grid grid-cols-1 gap-6 mb-8">

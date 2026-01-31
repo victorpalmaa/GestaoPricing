@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SearchableSelect from './SearchableSelect';
+import Header from './Header';
+import { differenceInDays } from 'date-fns';
 
 import { 
   Plus, 
@@ -17,7 +19,8 @@ import {
   Download,
   CheckCircle,
   AlertTriangle,
-  Info
+  Info,
+  Clock
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
@@ -872,6 +875,20 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                       </td>
                       <td className="px-6 py-4 text-left" style={{ color: 'var(--color-text-secondary)' }}>
                         {new Date(lead.createdAt).toLocaleDateString('pt-BR')}
+                      </td>
+                      <td className="px-6 py-4 text-left">
+                        {(() => {
+                          const days = differenceInDays(new Date(), new Date(lead.createdAt));
+                          const isDelayed = days > 3; // Regra de exemplo: alerta após 3 dias
+                          return (
+                            <div className="flex items-center gap-2" title={`${days} dias neste status`}>
+                              <Clock size={16} className={isDelayed ? "text-orange-500" : "text-gray-400"} />
+                              <span className={`text-sm font-medium ${isDelayed ? "text-orange-600" : "text-gray-600"}`}>
+                                {days} dias
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4" style={{ width: '180px' }}>
                         <div className="relative flex items-center justify-center gap-2 w-full px-2 overflow-visible">
