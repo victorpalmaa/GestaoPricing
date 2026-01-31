@@ -6,6 +6,8 @@ import Cadastro from "./components/Cadastro";
 import Dashboard from "./components/Dashboard";
 import SessionSelect from "./components/SessionSelect";
 import Pricing from "./components/Pricing";
+import PricingDashboard from "./components/PricingDashboard";
+import PricingAnalytics from "./components/PricingAnalytics";
 import PreVendas from "./components/PreVendas";
 import CS from "./components/CS";
 import ForgotPassword from "./components/ForgotPassword";
@@ -123,6 +125,14 @@ function App() {
           <Route 
             path="/pricing" 
             element={user ? <Pricing user={user} /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/pricing/dashboard" 
+            element={user ? <PricingDashboard user={user} setUser={setUser} /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/pricing/analytics" 
+            element={user ? <PricingAnalytics user={user} setUser={setUser} /> : <Navigate to="/login" />} 
           />
           <Route 
             path="/pre-vendas/new-leads" 

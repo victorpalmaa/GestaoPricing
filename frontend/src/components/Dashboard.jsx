@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
- 
+import SearchableSelect from './SearchableSelect';
+
 import { 
   Plus, 
   Search, 
@@ -26,7 +27,23 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const getToken = () => localStorage.getItem('pronutrition_token') || sessionStorage.getItem('pronutrition_token');
   const [leads, setLeads] = useState([]);
   const [filteredLeads, setFilteredLeads] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
+  const [skuFilter, setSkuFilter] = useState('');
+
+  const clientOptions = useMemo(() => {
+    const uniqueClients = [...new Set(leads.map(lead => lead.cliente))].filter(Boolean).sort();
+    return uniqueClients.map(client => ({ label: client, value: client }));
+  }, [leads]);
+
+  const skuOptions = useMemo(() => {
+    let data = leads;
+    if (clientFilter) {
+      data = data.filter(lead => lead.cliente === clientFilter);
+    }
+    const uniqueSKUs = [...new Set(data.map(lead => lead.sku))].filter(Boolean).sort();
+    return uniqueSKUs.map(sku => ({ label: sku, value: sku }));
+  }, [leads, clientFilter]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState(null);
@@ -109,12 +126,12 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   useEffect(() => {
     let data = [...leads];
 
-    if (searchTerm.trim() !== '') {
-      const term = searchTerm.toLowerCase();
-      data = data.filter(lead =>
-        lead.cliente.toLowerCase().includes(term) ||
-        lead.sku.toLowerCase().includes(term)
-      );
+    if (clientFilter) {
+      data = data.filter(lead => lead.cliente === clientFilter);
+    }
+
+    if (skuFilter) {
+      data = data.filter(lead => lead.sku === skuFilter);
     }
 
     if (filterStatus) {
@@ -150,7 +167,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     }
 
     setFilteredLeads(data);
-  }, [leads, searchTerm, filterStatus, filterStartDate, filterEndDate, sortField, sortDir]);
+  }, [leads, clientFilter, skuFilter, filterStatus, filterStartDate, filterEndDate, sortField, sortDir]);
 
   const handleLogout = () => {
     try {
@@ -565,19 +582,39 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         {/* Toolbar */}
         <div className="card-pronutrition mb-6" style={{ padding: '1.5rem' }}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            {/* Search Bar */}
-            <div className="flex-1 max-w-2xl">
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Search size={20} style={{ color: 'var(--color-text-muted)' }} />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Pesquisar por cliente ou SKU..."
-                  className="input-pronutrition pl-10 h-12 text-base"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+            {/* Filters */}
+            <div className="flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                <SearchableSelect
+                  options={clientOptions}
+                  value={clientFilter}
+                  onChange={(val) => {
+                    setClientFilter(val);
+                    setSkuFilter(''); // Reset SKU when client changes
+                  }}
+                  placeholder="Filtrar por Cliente"
+                  searchPlaceholder="Buscar cliente..."
                 />
+                <SearchableSelect
+                  options={skuOptions}
+                  value={skuFilter}
+                  onChange={setSkuFilter}
+                  placeholder="Filtrar por SKU"
+                  searchPlaceholder="Buscar SKU..."
+                />
+                
+                {(clientFilter || skuFilter) && (
+                   <button
+                    onClick={() => {
+                      setClientFilter('');
+                      setSkuFilter('');
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    <X size={16} />
+                    Limpar
+                  </button>
+                )}
               </div>
             </div>
 
@@ -757,7 +794,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   <tr>
                     <td colSpan="10" className="px-6 py-12 text-center">
                       <p style={{ color: 'var(--color-text-muted)' }}>
-                        {searchTerm ? 'Nenhum resultado encontrado' : 'Nenhum preço cadastrado ainda'}
+                        {(clientFilter || skuFilter) ? 'Nenhum resultado encontrado' : 'Nenhum preço cadastrado ainda'}
                       </p>
                     </td>
                   </tr>

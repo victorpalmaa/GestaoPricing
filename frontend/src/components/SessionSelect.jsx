@@ -5,7 +5,7 @@ import { Briefcase, ClipboardList, Users } from 'lucide-react';
 const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
   const cards = [
-    { key: 'pricing', title: 'Pricing', icon: Briefcase, to: '/pricing' },
+    { key: 'pricing-dashboard', title: 'Pricing', icon: Briefcase, to: '/pricing/dashboard' },
     { key: 'pre-vendas', title: 'Pré-sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
     { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
   ];
@@ -27,7 +27,7 @@ const SessionSelect = ({ user }) => {
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cards.map(({ key, title, icon: Icon, to }) => (
             <button
               key={key}
