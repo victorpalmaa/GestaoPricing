@@ -2,11 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, cn } from '@/lib/utils';
 import { format, subDays } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ClientAliasManager from './ClientAliasManager';
 import Header from './Header';
 import { toast } from 'sonner';
+import { addNotification } from '@/utils/notifications';
 import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
@@ -68,8 +70,8 @@ const PricingDashboard = ({ user }) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
 
-  const CATEGORY_OPTIONS = ['Pó', 'Cápsula', 'Gel', 'Pastilha'];
-  const SUBCATEGORY_OPTIONS = ['Creatina', 'Colágeno', 'Glutamina', 'Proteína', 'Gel', 'Cápsula', 'Pastilha', 'Outros'];
+  const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
+  const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
 
   const userArea = user?.area || user?.user_metadata?.area;
   const isSuper = userArea === 'Pricing';
@@ -98,6 +100,10 @@ const PricingDashboard = ({ user }) => {
     return subcategories.map(s => ({ label: s, value: s }));
   }, [safePricingData, filters.category]);
 
+  // Sidebar Fix (Sticky Header) - Implemented via CSS in Header or Table
+  // Ensuring the table header is sticky
+
+  
   const sizeOptions = useMemo(() => {
     const sizes = [...new Set(safePricingData.map(item => item.size).filter(Boolean))].sort();
     return sizes.map(s => ({ label: s, value: s }));
@@ -171,10 +177,61 @@ const PricingDashboard = ({ user }) => {
         }
       });
 
-      const enrichedData = (pricingDataRaw || []).map(item => ({
-        ...item,
-        isCurrent: item.date === latestMap.get(`${item.client_id}-${item.sku}`)
-      }));
+      const enrichedData = (pricingDataRaw || []).map(item => {
+        // Derivar Categoria e Subcategoria corretamente
+        let category = item.category;
+        let subcategory = item.subcategory;
+        
+        // Garantir que o mês esteja preenchido para visualização
+        let month = item.month;
+        if (!month && item.date) {
+          try {
+             // Ajuste de fuso horário simples para visualização correta do mês
+             const dateObj = new Date(item.date);
+             // Adicionar offset de fuso se necessário ou usar UTC
+             const userTimezoneOffset = dateObj.getTimezoneOffset() * 60000;
+             const adjustedDate = new Date(dateObj.getTime() + userTimezoneOffset);
+             month = format(dateObj, 'MMM/yy', { locale: ptBR });
+          } catch (e) {
+             console.error('Erro ao formatar data para mês:', e);
+          }
+        }
+        
+        // Se a categoria não for uma das padrão, tentar derivar
+        const validCategories = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
+        if (!validCategories.includes(category)) {
+          const checkStr = (subcategory || category || '').toLowerCase();
+          
+          if (checkStr.includes('creatina') || checkStr.includes('colágeno') || checkStr.includes('glutamina') || checkStr.includes('proteína') || checkStr.includes('whey') || checkStr.includes('pre-workout')) {
+             category = 'Pó';
+             // Se subcategoria estava vazia, usa o valor que estava em categoria
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('softgel')) {
+             category = 'Softgel';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('gel')) {
+             category = 'Gel';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('cápsula') || checkStr.includes('capsula')) {
+             category = 'Cápsula';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('goma') || checkStr.includes('gummy')) {
+             category = 'Goma';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('pastilha')) {
+             category = 'Pastilha';
+             if (!subcategory && item.category) subcategory = item.category;
+          }
+        }
+
+        return {
+          ...item,
+          category,
+          subcategory,
+          month,
+          isCurrent: item.date === latestMap.get(`${item.client_id}-${item.sku}`)
+        };
+      });
 
       setPricingData(enrichedData);
 
@@ -237,7 +294,7 @@ const PricingDashboard = ({ user }) => {
         'Preço bruto': item.gross_price || '',
         'Moeda': item.currency || 'BRL',
         'Margem (Orçada)': item.margin_budget ? `${item.margin_budget}%` : '',
-        'Mês': item.month || '',
+        'Mês': item.month || (item.date ? format(new Date(item.date), 'MMM/yy', { locale: ptBR }) : ''),
         'Categoria': item.category || '',
         'Subcategoria': item.subcategory || ''
       }));
@@ -389,13 +446,13 @@ const PricingDashboard = ({ user }) => {
             // Validar/Gerar data
             let date = new Date();
             const monthVal = row['month'];
-            let monthStr = null; // Declare monthStr variable to fix ReferenceError
+            let monthStr = null;
             
             // Se monthVal já for um objeto Date (graças ao cellDates: true)
             if (monthVal instanceof Date && !isNaN(monthVal)) {
                date = monthVal;
-               // Opcional: tentar formatar monthStr a partir da data para salvar no banco
-               // monthStr = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+               // Gerar string do mês a partir da data se não veio como texto
+               monthStr = format(date, 'MMM/yy', { locale: ptBR });
             } 
             else if (typeof monthVal === 'string') {
                monthStr = monthVal.trim();
@@ -421,6 +478,19 @@ const PricingDashboard = ({ user }) => {
                    
                    if (monthIndex !== -1 && !isNaN(year)) {
                      date = new Date(year, monthIndex, 1);
+                   }
+                 } else if (parts.length === 1) {
+                   // Caso seja apenas o nome do mês (ex: "Janeiro"), assume o ano atual
+                   const monthPart = parts[0].substring(0, 3);
+                   let monthIndex = -1;
+                   Object.keys(months).forEach(m => {
+                      if (monthPart.includes(m)) monthIndex = months[m];
+                   });
+                   
+                   if (monthIndex !== -1) {
+                     date = new Date(new Date().getFullYear(), monthIndex, 1);
+                     // Atualiza monthStr para o formato padrão
+                     monthStr = format(date, 'MMM/yy', { locale: ptBR });
                    }
                  }
                }
@@ -511,8 +581,10 @@ const PricingDashboard = ({ user }) => {
 
           if (errorCount > 0) {
              toast.success(`Importação parcial: ${successCount} registros importados, ${errorCount} ignorados.`);
+             addNotification('import', `Importação parcial de preços: ${successCount} registros importados, ${errorCount} ignorados`, user?.id);
           } else {
              toast.success(`Importação realizada com sucesso! ${successCount} registros importados.`);
+             addNotification('import', `Importação de preços finalizada: ${successCount} registros importados`, user?.id);
           }
           
           setShowImportModal(false);
@@ -588,6 +660,7 @@ const PricingDashboard = ({ user }) => {
       if (error) throw error;
 
       toast.success(editingId ? 'Preço atualizado com sucesso!' : 'Preço cadastrado com sucesso!');
+      addNotification('pricing', editingId ? `Preço atualizado para SKU ${priceData.sku}` : `Novo preço cadastrado para SKU ${priceData.sku}`, user?.id);
       setShowNewPriceModal(false);
       setEditingId(null);
       setNewPriceForm({
@@ -654,6 +727,7 @@ const PricingDashboard = ({ user }) => {
       if (error) throw error;
 
       toast.success('Registro excluído com sucesso!');
+      addNotification('pricing', `Preço excluído para SKU ${itemToDelete.sku}`, user?.id);
       loadData();
       setShowDeleteModal(false);
       setItemToDelete(null);
@@ -745,24 +819,24 @@ const PricingDashboard = ({ user }) => {
                     });
                     setShowNewPriceModal(true);
                   }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-success)', color: 'white' }}
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[180px]"
+                  style={{ backgroundColor: 'var(--color-success)' }}
                 >
                   <Plus size={18} />
                   Novo Preço
                 </button>
                 <button
                   onClick={() => setShowImportModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-info)', color: 'white' }}
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[180px]"
+                  style={{ backgroundColor: 'var(--color-info)' }}
                 >
                   <Upload size={18} />
                   Importar Excel
                 </button>
                 <button
                   onClick={() => navigate('/pricing/analytics')}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-primary)', color: 'white' }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white"
+                  style={{ backgroundColor: 'var(--color-primary)' }}
                 >
                   <BarChart3 size={18} />
                   Ver Dashboards/Análises
@@ -777,18 +851,16 @@ const PricingDashboard = ({ user }) => {
               <>
                 <button
                   onClick={handleExportExcel}
-                  className="p-2 rounded-lg hover:bg-gray-100 transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ color: 'var(--color-text-secondary)' }}
+                  className="flex items-center justify-center px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
                   title="Exportar"
                 >
-                  <Download size={20} />
+                  <Download size={18} />
                 </button>
                 <button
                   onClick={() => setShowAliasManager(true)}
-                  className="flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-warning)', color: 'var(--color-text-primary)', fontWeight: '700' }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
                 >
-                  <Settings size={20} />
+                  <Settings size={18} />
                   Gerenciar Aliases
                 </button>
               </>
@@ -800,44 +872,46 @@ const PricingDashboard = ({ user }) => {
         {/* Cards de Resumo */}
         <div className="max-w-[110rem] mx-auto px-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-            <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
+            <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Clientes</p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                    {new Set(filteredData.map(item => item.client_id)).size}
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Total Clientes</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {(filters.client || filters.sku || filters.category || filters.subcategory || filters.size || filters.datasulCode || filters.dateFrom || filters.dateTo) 
+                      ? new Set(filteredData.map(item => item.client_id)).size 
+                      : clients.length}
                   </p>
                 </div>
                 <Users className="text-blue-500" size={32} />
               </div>
             </div>
-            <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
+            <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total SKUs</p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Total SKUs</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
                     {new Set(filteredData.map(item => item.sku)).size}
                   </p>
                 </div>
                 <Package className="text-green-500" size={32} />
               </div>
             </div>
-            <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
+            <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Preço Médio</p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                    R$ {filteredData.length > 0 ? (filteredData.reduce((sum, item) => sum + (item.net_price || 0), 0) / filteredData.length).toFixed(2) : '0.00'}
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Preço Médio</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                    R$ {filteredData.length > 0 ? (filteredData.reduce((sum, item) => sum + Number(item.gross_price || 0), 0) / filteredData.length).toFixed(2) : '0.00'}
                   </p>
                 </div>
                 <DollarSign className="text-yellow-500" size={32} />
               </div>
             </div>
-            <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
+            <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Margem Média</p>
-                  <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Margem Média</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
                     {filteredData.length > 0 ? (filteredData.reduce((sum, item) => sum + Number(item.margin_budget || 0), 0) / filteredData.length).toFixed(1) : '0.0'}%
                   </p>
                 </div>
@@ -849,36 +923,36 @@ const PricingDashboard = ({ user }) => {
 
         {/* Filtros */}
         <div className="max-w-[110rem] mx-auto px-6">
-          <div className="bg-white rounded-lg p-6 shadow-sm mb-6">
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm mb-6 transition-colors duration-200">
             <div className="flex items-center gap-4 mb-4">
               <div className="flex items-center gap-2">
-                <Filter className="w-5 h-5 text-gray-500" />
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                   Filtros
                 </h3>
               </div>
               {(filters.client || filters.sku || filters.category || filters.subcategory || filters.size || filters.datasulCode || filters.dateFrom || filters.dateTo) && (
-                <button
-                  onClick={() => setFilters({
-                    client: '',
-                    sku: '',
-                    category: '',
-                    subcategory: '',
-                    size: '',
-                    datasulCode: '',
-                    dateFrom: '',
-                    dateTo: ''
-                  })}
-                  className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
-                >
-                  <X size={14} />
-                  Limpar
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              <button
+                onClick={() => setFilters({
+                  client: '',
+                  sku: '',
+                  category: '',
+                  subcategory: '',
+                  size: '',
+                  dateFrom: '',
+                  dateTo: '',
+                  datasulCode: ''
+                })}
+                className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-400 rounded-full transition-colors"
+              >
+                <X size={14} />
+                Limpar Filtros
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   SKU
                 </label>
                 <SearchableSelect
@@ -890,7 +964,7 @@ const PricingDashboard = ({ user }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Cliente
                 </label>
                 <SearchableSelect
@@ -902,19 +976,19 @@ const PricingDashboard = ({ user }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Código Datasul
                 </label>
                 <input
                   type="text"
                   value={filters.datasulCode}
                   onChange={(e) => handleFilterChange('datasulCode', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                   placeholder="Filtrar por código..."
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Categoria
                 </label>
                 <SearchableSelect
@@ -926,7 +1000,7 @@ const PricingDashboard = ({ user }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Subcategoria
                 </label>
                 <SearchableSelect
@@ -938,7 +1012,7 @@ const PricingDashboard = ({ user }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Tamanho
                 </label>
                 <SearchableSelect
@@ -950,25 +1024,25 @@ const PricingDashboard = ({ user }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Data Inicial
                 </label>
                 <input
                   type="date"
                   value={filters.dateFrom}
                   onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   Data Final
                 </label>
                 <input
                   type="date"
                   value={filters.dateTo}
                   onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                 />
               </div>
             </div>
@@ -977,30 +1051,30 @@ const PricingDashboard = ({ user }) => {
 
         {/* Tabela de Dados */}
         <div className="max-w-[110rem] mx-auto px-6">
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg shadow-sm overflow-hidden transition-colors duration-200">
+            <div className="overflow-auto h-[calc(100vh-250px)]">
+              <table className="w-full min-w-[2000px]">
+                <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-40 shadow-sm">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider sticky left-0 z-50 bg-gray-50 dark:bg-gray-800 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                       Cliente
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Tamanho
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Gestora
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Código
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       SKU
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Preço liquido
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Preço bruto
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1022,60 +1096,70 @@ const PricingDashboard = ({ user }) => {
                       Subcategoria
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Info
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 z-50 bg-gray-50 dark:bg-gray-800 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                       Ações
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white dark:bg-[#0a0a0a] divide-y divide-gray-200 dark:divide-gray-800">
                   {loading ? (
                     <tr>
-                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
                         Carregando...
                       </td>
                     </tr>
                   ) : filteredData.length === 0 ? (
                     <tr>
-                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
                         Nenhum dado encontrado
                       </td>
                     </tr>
                   ) : (
                     filteredData.map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                      <tr key={item.id} className="group hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sticky left-0 z-30 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50 dark:group-hover:bg-gray-900 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                           {item.clients?.name}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.size || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.manager || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.code || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.sku}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                           {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.net_price) || 0).toFixed(2)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.gross_price) || 0).toFixed(2)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.currency === 'USD' ? 'Dólar' : 'Real'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {(Number(item.margin_budget) || 0).toFixed(1)}%
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          {item.isCurrent ? (
+                            <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.month || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.category || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.subcategory || '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -1093,7 +1177,7 @@ const PricingDashboard = ({ user }) => {
                             </Tooltip>
                           </TooltipProvider>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm sticky right-0 z-30 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50 dark:group-hover:bg-gray-900 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                           <div className="flex gap-2">
                             <button
                               onClick={() => navigate(`/pricing/analytics?sku=${encodeURIComponent(item.sku)}&client=${encodeURIComponent(item.client_id)}`)}
@@ -1137,9 +1221,9 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Novo Preço */}
         {showNewPriceModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-auto shadow-xl">
-              <div className="flex items-center justify-between mb-4 sticky top-0 bg-white z-10 pb-2 border-b">
-                <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+            <div className="bg-white dark:bg-[#171717] rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-auto shadow-xl border dark:border-gray-800">
+              <div className="flex items-center justify-between mb-4 sticky top-0 bg-white dark:bg-[#171717] z-50 pb-2 border-b dark:border-gray-800">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                   {editingId ? 'Editar Preço' : 'Novo Preço'}
                 </h2>
                 <button
@@ -1147,22 +1231,22 @@ const PricingDashboard = ({ user }) => {
                     setShowNewPriceModal(false);
                     setEditingId(null);
                   }}
-                  className="p-1 hover:bg-gray-100 rounded-full transition-colors"
+                  className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500 dark:text-gray-400"
                 >
-                  <X size={20} className="text-gray-500" />
+                  <X size={20} />
                 </button>
               </div>
               <form onSubmit={handleNewPriceSubmit} id="newPriceForm" className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Cliente *
                     </label>
                     <select
                       value={newPriceForm.client_id}
                       onChange={(e) => handleNewPriceChange('client_id', e.target.value)}
                       required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                     >
                       <option value="">Selecione um cliente</option>
                       {clients.map(client => (
@@ -1171,7 +1255,7 @@ const PricingDashboard = ({ user }) => {
                     </select>
                   </div>
                   <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       SKU *
                     </label>
                     <input
@@ -1179,56 +1263,56 @@ const PricingDashboard = ({ user }) => {
                       value={newPriceForm.sku}
                       onChange={(e) => handleNewPriceChange('sku', e.target.value)}
                       required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="Digite o SKU"
                     />
                   </div>
                   
                   {/* Novos Campos */}
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Código
                     </label>
                     <input
                       type="text"
                       value={newPriceForm.code}
                       onChange={(e) => handleNewPriceChange('code', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="Código Datasul"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Gestora
                     </label>
                     <input
                       type="text"
                       value={newPriceForm.manager}
                       onChange={(e) => handleNewPriceChange('manager', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="Gestora"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Tamanho
                     </label>
                     <input
                       type="text"
                       value={newPriceForm.size}
                       onChange={(e) => handleNewPriceChange('size', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Ex: P, M, G"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      placeholder="Ex: 1, 2, 3"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Categoria
                     </label>
                     <select
                       value={newPriceForm.category}
                       onChange={(e) => handleNewPriceChange('category', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                     >
                       <option value="">Selecione uma categoria</option>
                       {CATEGORY_OPTIONS.map(opt => (
@@ -1237,13 +1321,13 @@ const PricingDashboard = ({ user }) => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Subcategoria
                     </label>
                     <select
                       value={newPriceForm.subcategory}
                       onChange={(e) => handleNewPriceChange('subcategory', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                     >
                       <option value="">Selecione uma subcategoria</option>
                       {SUBCATEGORY_OPTIONS.map(opt => (
@@ -1252,19 +1336,19 @@ const PricingDashboard = ({ user }) => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Mês
                     </label>
                     <input
                       type="date"
                       value={newPriceForm.month}
                       onChange={(e) => handleNewPriceChange('month', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Preço Líquido *
                     </label>
                     <input
@@ -1273,12 +1357,12 @@ const PricingDashboard = ({ user }) => {
                       value={newPriceForm.net_price}
                       onChange={(e) => handleNewPriceChange('net_price', e.target.value)}
                       required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="0.00"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Preço Bruto
                     </label>
                     <input
@@ -1286,12 +1370,12 @@ const PricingDashboard = ({ user }) => {
                       step="0.01"
                       value={newPriceForm.gross_price}
                       onChange={(e) => handleNewPriceChange('gross_price', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="0.00"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Margem Orçada (%)
                     </label>
                     <input
@@ -1299,12 +1383,12 @@ const PricingDashboard = ({ user }) => {
                       step="0.1"
                       value={newPriceForm.margin_budget}
                       onChange={(e) => handleNewPriceChange('margin_budget', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       placeholder="0.0"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Data *
                     </label>
                     <input
@@ -1312,17 +1396,17 @@ const PricingDashboard = ({ user }) => {
                       value={newPriceForm.date}
                       onChange={(e) => handleNewPriceChange('date', e.target.value)}
                       required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                     />
                   </div>
                   <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                       Observações
                     </label>
                     <textarea
                       value={newPriceForm.obs}
                       onChange={(e) => handleNewPriceChange('obs', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       rows="3"
                       placeholder="Observações opcionais"
                     />
@@ -1351,8 +1435,7 @@ const PricingDashboard = ({ user }) => {
                       obs: ''
                     });
                   }}
-                  className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                  className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600"
                 >
                   Cancelar
                 </button>
@@ -1372,11 +1455,11 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Exclusão */}
         {showDeleteModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-auto shadow-xl">
-              <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--color-text-primary)' }}>
+            <div className="bg-white dark:bg-[#171717] dark:border dark:border-gray-800 rounded-lg p-6 w-full max-w-md mx-auto shadow-xl transition-colors duration-200">
+              <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">
                 Confirmar Exclusão
               </h2>
-              <p className="text-gray-600 mb-6">
+              <p className="text-gray-600 dark:text-gray-300 mb-6">
                 Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita.
               </p>
               <div className="flex justify-end gap-3">
@@ -1385,8 +1468,7 @@ const PricingDashboard = ({ user }) => {
                     setShowDeleteModal(false);
                     setItemToDelete(null);
                   }}
-                  className="px-4 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100"
-                  style={{ color: 'var(--color-text-secondary)' }}
+                  className="px-4 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
                 >
                   Cancelar
                 </button>
@@ -1405,28 +1487,28 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Importação */}
         {showImportModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-              <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--color-text-primary)' }}>
+            <div className="bg-white dark:bg-[#171717] dark:border dark:border-gray-800 rounded-lg p-6 w-full max-w-md mx-4 transition-colors duration-200">
+              <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">
                 Importar Excel
               </h2>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                     Arquivo Excel
                   </label>
                   <input
                     type="file"
                     accept=".xlsx,.xls"
                     onChange={handleFileUpload}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                   />
                   {importFile && (
-                    <p className="text-sm text-green-600 mt-1">
+                    <p className="text-sm text-green-600 dark:text-green-400 mt-1">
                       Arquivo selecionado: {importFile.name}
                     </p>
                   )}
                 </div>
-                <div className="text-sm text-gray-600">
+                <div className="text-sm text-gray-600 dark:text-gray-400">
                   <p>Formato esperado das colunas:</p>
                   <ul className="list-disc list-inside mt-2 grid grid-cols-2 gap-x-4">
                     <li>Cliente</li>
@@ -1450,8 +1532,7 @@ const PricingDashboard = ({ user }) => {
                     setShowImportModal(false);
                     setImportFile(null);
                   }}
-                  className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-                  style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                  className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                   Cancelar
                 </button>
@@ -1472,19 +1553,19 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Gerenciamento de Aliases */}
         {showAliasManager && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="bg-white dark:bg-[#171717] dark:border dark:border-gray-800 rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto transition-colors duration-200">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                   Gerenciar Aliases de Clientes
                 </h2>
                 <button
                   onClick={() => setShowAliasManager(false)}
-                  className="text-gray-500 hover:text-gray-700 transition-transform hover:scale-110"
+                  className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-transform hover:scale-110"
                 >
                   ✕
                 </button>
               </div>
-              <ClientAliasManager />
+              <ClientAliasManager user={user} />
             </div>
           </div>
         )}

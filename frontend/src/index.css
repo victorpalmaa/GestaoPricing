@@ -84,10 +84,10 @@ h3 {
   box-sizing: border-box;
 }
 
-/* Scrollbar customizada */
+/* Scrollbar customizada - Destacada */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 16px; /* Mais alta para destaque horizontal */
 }
 
 ::-webkit-scrollbar-track {
@@ -96,12 +96,26 @@ h3 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #94a3b8; /* Slate-400 - Mais visível */
   border-radius: var(--radius-sm);
+  border: 3px solid var(--color-bg-secondary); /* Borda para separar do track */
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: var(--color-primary); /* Cor primária no hover */
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #171717;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-color: #171717;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
 }
 
 @layer base {
@@ -158,6 +172,17 @@ h3 {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    
+    /* Custom Brand Variables for Dark Mode */
+    --color-bg-main: #0a0a0a;
+    --color-bg-secondary: #171717; /* neutral-900 */
+    --color-bg-card: #0a0a0a; /* same as main bg */
+    
+    --color-text-primary: #FAFAFA; /* zinc-50 */
+    --color-text-secondary: #A1A1AA; /* zinc-400 */
+    --color-text-muted: #52525B; /* zinc-600 */
+    
+    --color-border: #27272A; /* zinc-800 */
   }
 }
 

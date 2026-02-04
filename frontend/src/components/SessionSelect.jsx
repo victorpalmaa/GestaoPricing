@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Briefcase, ClipboardList, Users } from 'lucide-react';
+import Header from './Header';
 
 const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
@@ -9,6 +10,7 @@ const SessionSelect = ({ user }) => {
     { key: 'pre-vendas', title: 'Pré-sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
     { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
   ];
+  
   const subtitleFor = (key) => {
     const area = user?.area || user?.user_metadata?.area;
     if (area === 'Pricing') return 'Acessar e gerenciar';
@@ -16,31 +18,40 @@ const SessionSelect = ({ user }) => {
     if (area === 'CS') return key === 'cs' ? 'Acessar e gerenciar' : 'Acessar';
     return 'Acessar';
   };
+
   return (
-    <div className="min-h-screen py-12 px-6" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>Escolha a sessão</h1>
-            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              Bem-vindo, {user?.nome || user?.user_metadata?.nome}
-            </p>
-          </div>
+    <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">
+      <Header 
+        user={user} 
+        title="Sessões" 
+        subtitle="Menu Principal" 
+        showBack={false} 
+      />
+      
+      <div className="max-w-5xl mx-auto px-6 py-12">
+        <div className="mb-8">
+          <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
+            Bem-vindo, {user?.nome || user?.user_metadata?.nome}
+          </h1>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Selecione o módulo que deseja acessar
+          </p>
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {cards.map(({ key, title, icon: Icon, to }) => (
             <button
               key={key}
               onClick={() => navigate(to)}
-              className="card-pronutrition w-full p-6 text-left transition-transform hover:scale-[1.01]"
+              className="w-full p-6 text-left bg-white dark:bg-[#0a0a0a] dark:border-gray-800 border border-transparent shadow-sm rounded-xl hover:shadow-md transition-all duration-200 hover:scale-[1.02] group"
             >
               <div className="flex items-center gap-4">
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-                  <Icon size={28} style={{ color: 'var(--color-primary)' }} />
+                <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-900 text-blue-600 dark:text-blue-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors">
+                  <Icon size={28} />
                 </div>
                 <div>
-                  <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>{title}</h2>
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>{subtitleFor(key)}</p>
+                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">{title}</h2>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{subtitleFor(key)}</p>
                 </div>
               </div>
             </button>

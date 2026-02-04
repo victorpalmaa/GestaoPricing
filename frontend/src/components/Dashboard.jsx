@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import SearchableSelect from './SearchableSelect';
 import Header from './Header';
 import { differenceInDays } from 'date-fns';
+import { addNotification } from '@/utils/notifications';
 
 import { 
   Plus, 
@@ -20,7 +21,8 @@ import {
   CheckCircle,
   AlertTriangle,
   Info,
-  Clock
+  Clock,
+  Activity
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
@@ -32,6 +34,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [filteredLeads, setFilteredLeads] = useState([]);
   const [clientFilter, setClientFilter] = useState('');
   const [skuFilter, setSkuFilter] = useState('');
+  const [precoBrutoFilter, setPrecoBrutoFilter] = useState('');
+  const [margemBrutaFilter, setMargemBrutaFilter] = useState('');
 
   const clientOptions = useMemo(() => {
     const uniqueClients = [...new Set(leads.map(lead => lead.cliente))].filter(Boolean).sort();
@@ -47,9 +51,22 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     return uniqueSKUs.map(sku => ({ label: sku, value: sku }));
   }, [leads, clientFilter]);
 
+  const precoBrutoOptions = useMemo(() => {
+    const uniquePrices = [...new Set(leads.map(lead => lead.precoBruto))].filter(p => p != null).sort((a, b) => a - b);
+    return uniquePrices.map(p => ({ label: `R$ ${p.toFixed(2)}`, value: p.toString() }));
+  }, [leads]);
+
+  const margemBrutaOptions = useMemo(() => {
+    const uniqueMargins = [...new Set(leads.map(lead => lead.margemBruta))].filter(m => m != null).sort((a, b) => a - b);
+    return uniqueMargins.map(m => ({ label: `${m.toFixed(1)}%`, value: m.toString() }));
+  }, [leads]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isRejectionModalOpen, setIsRejectionModalOpen] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState(null);
+  const [leadToReject, setLeadToReject] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
   const [showMoney, setShowMoney] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(null);
@@ -65,6 +82,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [initialLoading, setInitialLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Constants
+  const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
+  const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
+
   const showAlert = (message, type = 'info') => {
     setAlert({ show: true, message, type });
     setTimeout(() => setAlert({ show: false, message: '', type: 'info' }), 3000);
@@ -72,6 +93,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [formData, setFormData] = useState({
     cliente: '',
     sku: '',
+    category: '',
+    subcategory: '',
     pricingId: '',
     precoLiquido: '',
     precoBruto: '',
@@ -100,7 +123,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       setInitialLoading(true);
       const { data, error } = await supabase
         .from('prices')
-        .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat')
+        .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat')
         .order('createdat', { ascending: false });
       if (error) {
         setLeads([]);
@@ -111,6 +134,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           id: r.id,
           cliente: r.cliente,
           sku: r.sku,
+          category: r.category,
+          subcategory: r.subcategory,
           pricingId: r.pricingid,
           precoLiquido: r.precoliquido,
           precoBruto: r.precobruto,
@@ -135,6 +160,14 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
     if (skuFilter) {
       data = data.filter(lead => lead.sku === skuFilter);
+    }
+
+    if (precoBrutoFilter) {
+      data = data.filter(lead => lead.precoBruto?.toString().includes(precoBrutoFilter));
+    }
+
+    if (margemBrutaFilter) {
+      data = data.filter(lead => lead.margemBruta?.toString().includes(margemBrutaFilter));
     }
 
     if (filterStatus) {
@@ -170,7 +203,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     }
 
     setFilteredLeads(data);
-  }, [leads, clientFilter, skuFilter, filterStatus, filterStartDate, filterEndDate, sortField, sortDir]);
+  }, [leads, clientFilter, skuFilter, precoBrutoFilter, margemBrutaFilter, filterStatus, filterStartDate, filterEndDate, sortField, sortDir]);
 
   const handleLogout = () => {
     try {
@@ -191,6 +224,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       setFormData({
         cliente: lead.cliente,
         sku: lead.sku,
+        category: lead.category || '',
         pricingId: lead.pricingId || '',
         precoLiquido: lead.precoLiquido,
         precoBruto: lead.precoBruto,
@@ -203,6 +237,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       setFormData({
         cliente: '',
         sku: '',
+        category: '',
         pricingId: '',
         precoLiquido: '',
         precoBruto: '',
@@ -229,7 +264,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       precoBruto: parseFloat(formData.precoBruto),
       margemBruta: parseFloat(formData.margemBruta),
       volume: parseInt(formData.volume),
-      status: formData.status
+      status: formData.status,
+      category: formData.category
     };
 
     if (editingLead) {
@@ -239,6 +275,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           .update({
             cliente: leadData.cliente,
             sku: leadData.sku,
+            category: leadData.category,
             pricingid: leadData.pricingId,
             precoliquido: leadData.precoLiquido,
             precobruto: leadData.precoBruto,
@@ -247,7 +284,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             status: leadData.status
           })
           .eq('id', editingLead.id)
-          .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
         if (error) {
           showAlert(error.message || 'Falha ao atualizar', 'error');
           toast.error('Falha ao atualizar');
@@ -257,6 +294,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             id: r.id,
             cliente: r.cliente,
             sku: r.sku,
+            category: r.category,
             pricingId: r.pricingid,
             precoLiquido: r.precoliquido,
             precoBruto: r.precobruto,
@@ -266,6 +304,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             createdAt: r.createdat,
           };
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
+          addNotification('update', `Lead atualizado: ${updated.cliente} - ${updated.sku}`, user?.id);
           showAlert('Lead atualizado com sucesso', 'success');
           toast.success('Lead atualizado');
         }
@@ -278,6 +317,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             {
               cliente: leadData.cliente,
               sku: leadData.sku,
+              category: leadData.category,
               pricingid: leadData.pricingId,
               precoliquido: leadData.precoLiquido,
               precobruto: leadData.precoBruto,
@@ -286,7 +326,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               status: leadData.status
             }
           ])
-          .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
         if (error) {
           showAlert(error.message || 'Falha ao adicionar', 'error');
           toast.error('Falha ao adicionar');
@@ -296,6 +336,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             id: r.id,
             cliente: r.cliente,
             sku: r.sku,
+            category: r.category,
             pricingId: r.pricingid,
             precoLiquido: r.precoliquido,
             precoBruto: r.precobruto,
@@ -305,6 +346,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             createdAt: r.createdat,
           };
           setLeads([newLead, ...leads]);
+          addNotification('create', `Novo lead adicionado: ${newLead.cliente} - ${newLead.sku}`, user?.id);
           setShowMoney(true);
           setTimeout(() => setShowMoney(false), 3000);
           showAlert('Lead adicionado com sucesso', 'success');
@@ -315,6 +357,72 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
     closeModal();
     setIsSubmitting(false);
+  };
+
+  const handleRejectionSubmit = async () => {
+    if (!leadToReject || !rejectionReason) {
+      toast.error('Selecione um motivo para a reprovação');
+      return;
+    }
+
+    try {
+      // 1. Atualizar status na tabela prices
+      const { data: updatedRows, error: updateError } = await supabase
+        .from('prices')
+        .update({ status: 'reprovado' })
+        .eq('id', leadToReject.id)
+        .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+
+      if (updateError) throw updateError;
+
+      // 2. Inserir na tabela price_rejections
+      const { error: insertError } = await supabase
+        .from('price_rejections')
+        .insert({
+          price_id: leadToReject.id,
+          cliente: leadToReject.cliente,
+          sku: leadToReject.sku,
+          preco_bruto: leadToReject.precoBruto,
+          margem_bruta: leadToReject.margemBruta,
+          motivo: rejectionReason,
+          user_id: user?.id
+        });
+
+      if (insertError) {
+        console.error('Erro ao salvar motivo de reprovação:', insertError);
+        // Não impede o fluxo, apenas loga
+      }
+
+      // 3. Atualizar estado local
+      const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+      const updated = {
+        id: r.id,
+        cliente: r.cliente,
+        sku: r.sku,
+        category: r.category,
+        pricingId: r.pricingid,
+        precoLiquido: r.precoliquido,
+        precoBruto: r.precobruto,
+        margemBruta: r.margembruta,
+        volume: r.volume,
+        status: r.status,
+        createdAt: r.createdat,
+      };
+      setLeads(leads.map(l => l.id === leadToReject.id ? updated : l));
+      addNotification('update', `Lead reprovado: ${updated.cliente} - ${updated.sku}`, user?.id);
+      showAlert('Lead reprovado com sucesso', 'success');
+      toast.success('Lead reprovado');
+      
+      // 4. Limpar e fechar
+      setIsRejectionModalOpen(false);
+      setLeadToReject(null);
+      setRejectionReason('');
+
+    } catch (error) {
+      console.error('Erro ao reprovar lead:', error);
+      showAlert('Falha ao reprovar lead', 'error');
+      toast.error('Falha ao reprovar lead');
+    }
   };
 
   const handleDelete = (id) => {
@@ -334,6 +442,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           toast.error('Falha ao excluir');
         } else {
           setLeads(leads.filter(l => l.id !== leadToDelete));
+          addNotification('delete', 'Lead excluído', user?.id);
           setLeadToDelete(null);
           showAlert('Lead excluído com sucesso', 'danger');
           toast.success('Lead excluído');
@@ -371,54 +480,15 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
+    <div className="min-h-screen bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
       {/* Header */}
-      <header className="">
-        <div className="max-w-[110rem] mx-auto px-6 py-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <img 
-                src="/logo-pronutrition-symbol.png" 
-                alt="PRONUTRITION" 
-                className="h-20"
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                  e.target.nextSibling.style.display = 'block';
-                }}
-              />
-              <div style={{ display: 'none', fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--color-primary)' }}>
-                PN
-              </div>
-              <div>
-                <h2 className="text-3xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                  Gestão de Pricing
-                </h2>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  {title}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                  {user?.nome || user?.user_metadata?.nome} {user?.sobrenome || user?.user_metadata?.sobrenome}
-                </p>
-                <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                  {user?.area || user?.user_metadata?.area}
-                </p>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                style={{ color: 'var(--color-text-secondary)' }}
-                title="Sair"
-              >
-                <LogOut size={20} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <Header 
+        user={user} 
+        title="Gestão de Pricing" 
+        subtitle={title} 
+        showBack={true} 
+        backPath="/select"
+      />
 
       {/* Money Animation Overlay */}
       {showMoney && (
@@ -446,53 +516,53 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         <div className="flex items-center justify-end mb-1">
           <button
             onClick={() => setShowMoreMetrics(!showMoreMetrics)}
-            className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95"
-            style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
           >
+            <Activity size={18} />
             {showMoreMetrics ? 'Menos métricas' : 'Mais métricas'}
           </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   Total de Leads
                 </p>
-                <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   {leads.length}
                 </p>
               </div>
-              <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(132, 90, 250, 0.1)' }}>
-                <BarChart3 size={24} style={{ color: 'var(--color-primary)' }} />
+              <div className="p-3 rounded-lg bg-primary/10 text-primary">
+                <BarChart3 size={24} />
               </div>
             </div>
           </div>
 
-          <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   ROB Estimado
                 </p>
-                <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   R$ {(leads.reduce((acc, lead) => acc + (lead.precoBruto * lead.volume), 0) / 1000).toFixed(1)}k
                 </p>
               </div>
-              <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(100, 208, 32, 0.1)' }}>
-                <DollarSign size={24} style={{ color: 'var(--color-success)' }} />
+              <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
+                <DollarSign size={24} />
               </div>
             </div>
           </div>
 
-          <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   Taxa de Assertividade
                 </p>
-                <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   {(() => {
                     const aprovados = leads.filter(l => l.status === 'aprovado').length;
                     const reprovados = leads.filter(l => l.status === 'reprovado').length;
@@ -501,8 +571,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   })()}%
                 </p>
               </div>
-              <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(26, 198, 252, 0.1)' }}>
-                <TrendingUp size={24} style={{ color: 'var(--color-info)' }} />
+              <div className="p-3 rounded-lg bg-blue-500/10 text-blue-500">
+                <TrendingUp size={24} />
               </div>
             </div>
           </div>
@@ -510,13 +580,13 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
         {showMoreMetrics && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                    MB Absoluta (Aprovados)
+            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Leads Aprovados
                   </p>
-                  <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     R$ {( 
                       leads
                         .filter(l => l.status === 'aprovado')
@@ -524,58 +594,58 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     ).toFixed(1)}k
                   </p>
                 </div>
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(100, 208, 32, 0.1)' }}>
-                  <DollarSign size={24} style={{ color: 'var(--color-success)' }} />
+                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
+                  <DollarSign size={24} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     MB Média
                   </p>
-                  <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     {leads.length > 0 
                       ? (leads.reduce((acc, lead) => acc + lead.margemBruta, 0) / leads.length).toFixed(1)
                       : '0'}%
                   </p>
                 </div>
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(26, 198, 252, 0.1)' }}>
-                  <TrendingUp size={24} style={{ color: 'var(--color-info)' }} />
+                <div className="p-3 rounded-lg bg-blue-500/10 text-blue-500">
+                  <TrendingUp size={24} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     ROL Estimado
                   </p>
-                  <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     R$ {(leads.reduce((acc, lead) => acc + (lead.precoLiquido * lead.volume), 0) / 1000).toFixed(1)}k
                   </p>
                 </div>
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(100, 208, 32, 0.1)' }}>
-                  <DollarSign size={24} style={{ color: 'var(--color-success)' }} />
+                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
+                  <DollarSign size={24} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift" style={{ padding: '1.25rem' }}>
+            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     Volume Total
                   </p>
-                  <p className="text-2xl font-bold mt-1" style={{ color: 'var(--color-text-primary)' }}>
+                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     {leads.reduce((acc, lead) => acc + lead.volume, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
-                <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(100, 208, 32, 0.1)' }}>
-                  <Package size={24} style={{ color: 'var(--color-success)' }} />
+                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
+                  <Package size={24} />
                 </div>
               </div>
             </div>
@@ -583,11 +653,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         )}
 
         {/* Toolbar */}
-        <div className="card-pronutrition mb-6" style={{ padding: '1.5rem' }}>
+        <div className="card-pronutrition mb-6 p-6 dark:bg-[#0a0a0a] dark:border-gray-800">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             {/* Filters */}
             <div className="flex-1">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
                 <SearchableSelect
                   options={clientOptions}
                   value={clientFilter}
@@ -605,19 +675,20 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   placeholder="Filtrar por SKU"
                   searchPlaceholder="Buscar SKU..."
                 />
-                
-                {(clientFilter || skuFilter) && (
-                   <button
-                    onClick={() => {
-                      setClientFilter('');
-                      setSkuFilter('');
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    <X size={16} />
-                    Limpar
-                  </button>
-                )}
+                <input
+                  type="number"
+                  placeholder="Preço Bruto"
+                  value={precoBrutoFilter}
+                  onChange={(e) => setPrecoBrutoFilter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-[#0a0a0a] text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
+                />
+                <input
+                  type="number"
+                  placeholder="Margem %"
+                  value={margemBrutaFilter}
+                  onChange={(e) => setMargemBrutaFilter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-[#0a0a0a] text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
+                />
               </div>
             </div>
 
@@ -625,40 +696,34 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             <div className="relative flex items-center space-x-2">
               <button
                 onClick={() => openModal()}
-                className="btn-primary flex items-center space-x-2"
-                style={{ transition: 'transform 0.15s ease' }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                className="btn-primary flex items-center space-x-2 transition-transform hover:scale-105 active:scale-95"
               >
                 <Plus size={20} />
-                <span>Adicionar Novo Preço</span>
+                <span>Novo Preço</span>
               </button>
               <button
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100"
-                style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100 dark:hover:bg-gray-800 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
                 title="Filtros"
               >
                 <Filter size={18} style={{ transition: 'transform 0.2s ease', transform: isFilterOpen ? 'rotate(90deg) scale(1.05)' : 'rotate(0deg)' }} />
               </button>
               <button
                 onClick={exportToExcel}
-                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100"
-                style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100 dark:hover:bg-gray-800 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
                 title="Exportar CSV"
               >
                 <Download size={18} />
               </button>
               {isFilterOpen && (
                 <>
-                  <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setIsFilterOpen(false)}></div>
-                  <div className="card-pronutrition absolute right-0 top-12 w-80 text-xs" style={{ padding: '1.25rem', zIndex: 50 }} onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-40" onClick={() => setIsFilterOpen(false)}></div>
+                  <div className="card-pronutrition absolute right-0 top-12 w-80 text-xs p-5 z-50 dark:bg-[#0a0a0a] dark:border-gray-800" onClick={(e) => e.stopPropagation()}>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
-                      <label className="label-pronutrition text-xs" style={{ fontSize: '0.75rem' }}>Status</label>
+                      <label className="label-pronutrition text-xs">Status</label>
                       <select
-                        className="input-pronutrition text-xs"
-                        style={{ fontSize: '0.75rem' }}
+                        className="input-pronutrition text-xs p-2 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100"
                         value={filterStatus}
                         onChange={(e) => setFilterStatus(e.target.value)}
                       >
@@ -669,30 +734,27 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                       </select>
                     </div>
                     <div>
-                      <label className="label-pronutrition text-xs" style={{ fontSize: '0.75rem' }}>Data início</label>
+                      <label className="label-pronutrition text-xs">Data início</label>
                       <input
                         type="date"
-                        className="input-pronutrition text-xs"
-                        style={{ fontSize: '0.75rem' }}
+                        className="input-pronutrition text-xs p-2 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100"
                         value={filterStartDate}
                         onChange={(e) => setFilterStartDate(e.target.value)}
                       />
                     </div>
                     <div>
-                      <label className="label-pronutrition text-xs" style={{ fontSize: '0.75rem' }}>Data fim</label>
+                      <label className="label-pronutrition text-xs">Data fim</label>
                       <input
                         type="date"
-                        className="input-pronutrition text-xs"
-                        style={{ fontSize: '0.75rem' }}
+                        className="input-pronutrition text-xs p-2 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100"
                         value={filterEndDate}
                         onChange={(e) => setFilterEndDate(e.target.value)}
                       />
                     </div>
                     <div>
-                      <label className="label-pronutrition text-xs" style={{ fontSize: '0.75rem' }}>Ordenar por</label>
+                      <label className="label-pronutrition text-xs">Ordenar por</label>
                       <select
-                        className="input-pronutrition text-xs"
-                        style={{ fontSize: '0.75rem' }}
+                        className="input-pronutrition text-xs p-2 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100"
                         value={sortField}
                         onChange={(e) => setSortField(e.target.value)}
                       >
@@ -703,10 +765,9 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                       </select>
                     </div>
                     <div>
-                      <label className="label-pronutrition text-xs" style={{ fontSize: '0.75rem' }}>Direção</label>
+                      <label className="label-pronutrition text-xs">Direção</label>
                       <select
-                        className="input-pronutrition text-xs"
-                        style={{ fontSize: '0.75rem' }}
+                        className="input-pronutrition text-xs p-2 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100"
                         value={sortDir}
                         onChange={(e) => setSortDir(e.target.value)}
                       >
@@ -719,8 +780,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   <div className="flex justify-end space-x-2 pt-4">
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-lg font-semibold transition-colors"
-                      style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
                       onClick={() => {
                         setFilterStatus('');
                         setFilterStartDate('');
@@ -729,7 +789,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                         setSortDir('');
                       }}
                     >
-                      Remover filtros
+                      Limpar Filtros
                     </button>
                   </div>
                 </div>
@@ -740,107 +800,80 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         </div>
 
         {/* Table */}
-        <div className="card-pronutrition" style={{ padding: 0, overflow: 'visible' }}>
+        <div className="card-pronutrition dark:bg-[#0a0a0a] dark:border-gray-800 overflow-hidden p-0">
           {initialLoading && (
             <div className="px-6 py-4">
-              <p style={{ color: 'var(--color-text-secondary)' }}>Carregando dados...</p>
+              <p className="text-gray-500 dark:text-gray-400">Carregando dados...</p>
             </div>
           )}
-          <div className="overflow-x-hidden" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          <div className="overflow-x-auto max-h-[70vh]">
             <table className="w-full">
-              <thead style={{ backgroundColor: 'var(--color-bg-secondary)', borderBottom: '2px solid var(--color-primary)' }}>
+              <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
                 <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', width: '25%', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-1/4">
                     Cliente
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', width: '35%', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-[35%]">
                     SKU
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', width: '20%', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-1/5">
                     Precificação
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     Preço Líquido
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     Preço Bruto
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400">
                     MB (%)
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400">
                     Volume
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400">
                     Status
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', width: '180px', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-[180px]">
                     Data
                   </th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold" 
-                      style={{ color: 'var(--color-text-secondary)', width: '180px', backgroundColor: 'var(--color-bg-secondary)' }}>
+                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-500 dark:text-gray-400 w-[180px]">
                     Edição
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                 {filteredLeads.length === 0 ? (
                   <tr>
                     <td colSpan="10" className="px-6 py-12 text-center">
-                      <p style={{ color: 'var(--color-text-muted)' }}>
+                      <p className="text-gray-500 dark:text-gray-400">
                         {(clientFilter || skuFilter) ? 'Nenhum resultado encontrado' : 'Nenhum preço cadastrado ainda'}
                       </p>
                     </td>
                   </tr>
                 ) : (
-                  filteredLeads.map((lead, index) => (
+                  filteredLeads.map((lead) => (
                     <tr 
                       key={lead.id}
-                      style={{ 
-                        borderTop: index === 0 ? 'none' : '1px solid var(--color-border)',
-                        transition: 'background-color 0.2s ease'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'}
-                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
                     >
-                      <td className="px-6 py-4" style={{ color: 'var(--color-text-primary)', wordBreak: 'break-word', width: '25%' }}>
+                      <td className="px-6 py-4 text-gray-900 dark:text-gray-100 break-words w-1/4">
                         {lead.cliente}
                       </td>
-                      <td className="px-6 py-4" style={{ width: '35%' }}>
-                        <span className="px-3 py-1 rounded-lg text-sm font-medium"
-                              style={{ 
-                                backgroundColor: 'var(--color-bg-secondary)',
-                                color: 'var(--color-text-secondary)',
-                                wordBreak: 'break-word'
-                              }}>
+                      <td className="px-6 py-4 w-[35%]">
+                        <span className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 break-words inline-block">
                           {lead.sku}
                         </span>
                       </td>
-                      <td className="px-6 py-4" style={{ width: '20%' }}>
-                        <span className="px-3 py-1 rounded-lg text-sm font-medium"
-                              style={{ 
-                                backgroundColor: 'var(--color-bg-secondary)',
-                                color: 'var(--color-text-secondary)',
-                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                              }}>
+                      <td className="px-6 py-4 w-1/5">
+                        <span className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis block max-w-full">
                           {lead.pricingId}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right font-medium" 
-                          style={{ color: 'var(--color-text-primary)', whiteSpace: 'nowrap' }}>
+                      <td className="px-6 py-4 text-right font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         R$ {lead.precoLiquido.toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right" 
-                          style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
                         R$ {lead.precoBruto.toFixed(2)}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -856,8 +889,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           {lead.margemBruta.toFixed(1)}%
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right" 
-                          style={{ color: 'var(--color-text-secondary)' }}>
+                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400">
                         {lead.volume.toLocaleString('pt-BR')}
                       </td>
                       <td className="px-6 py-4 text-left">
@@ -867,13 +899,13 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           const color = s === 'aprovado' ? 'var(--color-success)' : s === 'reprovado' ? 'var(--color-danger)' : 'var(--color-info)';
                           const bg = s === 'aprovado' ? 'rgba(100, 208, 32, 0.15)' : s === 'reprovado' ? 'rgba(255, 86, 86, 0.15)' : 'rgba(26, 198, 252, 0.15)';
                           return (
-                            <span className="px-3 py-1 rounded-full text-sm font-medium" style={{ backgroundColor: bg, color, whiteSpace: 'nowrap' }}>
+                            <span className="px-3 py-1 rounded-full text-sm font-medium whitespace-nowrap" style={{ backgroundColor: bg, color }}>
                               {label}
                             </span>
                           );
                         })()}
                       </td>
-                      <td className="px-6 py-4 text-left" style={{ color: 'var(--color-text-secondary)' }}>
+                      <td className="px-6 py-4 text-left text-gray-500 dark:text-gray-400">
                         {new Date(lead.createdAt).toLocaleDateString('pt-BR')}
                       </td>
                       <td className="px-6 py-4 text-left">
@@ -890,13 +922,12 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           );
                         })()}
                       </td>
-                      <td className="px-6 py-4" style={{ width: '180px' }}>
-                        <div className="relative flex items-center justify-center gap-2 w-full px-2 overflow-visible">
+                      <td className="px-6 py-4 w-[180px]">
+                        <div className="relative flex items-center justify-center gap-2 w-full px-2">
                           {permissions.canEdit && (
                             <button
                               onClick={() => openModal(lead)}
-                              className="p-2 w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
-                              style={{ color: 'var(--color-info)' }}
+                              className="p-2 w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-blue-500"
                               title="Editar"
                             >
                               <Edit2 size={18} />
@@ -921,8 +952,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                 }
                                 setStatusMenuOpen(nextOpen);
                               }}
-                              className="p-2 w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
-                              style={{ color: 'var(--color-success)' }}
+                              className="p-2 w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-green-500"
                               title="Alterar Status"
                             >
                               <DollarSign size={18} />
@@ -931,8 +961,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           {statusMenuOpen === lead.id && (
                             <>
                               <div className="fixed inset-0 z-40" onClick={() => setStatusMenuOpen(null)}></div>
-                              <div className="card-pronutrition fixed z-50 w-56" style={{ padding: '0.5rem', top: statusMenuPos?.top, left: statusMenuPos?.left, overflow: 'visible' }} onClick={(e) => e.stopPropagation()}>
-                                <p className="text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>Definir status:</p>
+                              <div className="card-pronutrition fixed z-50 w-56 p-2 dark:bg-[#0a0a0a] dark:border-gray-800" style={{ top: statusMenuPos?.top, left: statusMenuPos?.left }} onClick={(e) => e.stopPropagation()}>
+                                <p className="text-sm mb-2 text-gray-500 dark:text-gray-400">Definir status:</p>
                                 <div className="space-y-2">
                                   {[
                                     { key: 'em_aberto', label: 'Em aberto', color: 'var(--color-info)' },
@@ -941,43 +971,50 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                   ].map(opt => (
                                     <button
                                       key={opt.key}
-                                      className="w-full px-3 py-2 rounded-lg hover:bg-gray-100 text-left"
+                                      className="w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-left"
                                       style={{ color: opt.color }}
                                       onClick={() => {
-                                        (async () => {
-                                          const { data: updatedRows, error } = await supabase
-                                            .from('prices')
-                                            .update({ status: opt.key })
-                                            .eq('id', lead.id)
-                                            .select('id, cliente, sku, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
-                                          if (error) {
-                                            setStatusMenuOpen(null);
-                                            showAlert('Falha ao atualizar status', 'error');
-                                            toast.error('Falha ao atualizar status');
-                                          } else {
-                                            const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
-                                            const updated = {
-                                              id: r.id,
-                                              cliente: r.cliente,
-                                              sku: r.sku,
-                                              pricingId: r.pricingid,
-                                              precoLiquido: r.precoliquido,
-                                              precoBruto: r.precobruto,
-                                              margemBruta: r.margembruta,
-                                              volume: r.volume,
-                                              status: r.status,
-                                              createdAt: r.createdat,
-                                            };
-                                            setLeads(leads.map(l => l.id === lead.id ? updated : l));
-                                            if (opt.key === 'aprovado') {
-                                              setShowMoney(true);
-                                              setTimeout(() => setShowMoney(false), 2500);
+                                        if (opt.key === 'reprovado') {
+                                          setStatusMenuOpen(null);
+                                          setLeadToReject(lead);
+                                          setIsRejectionModalOpen(true);
+                                        } else {
+                                          (async () => {
+                                            const { data: updatedRows, error } = await supabase
+                                              .from('prices')
+                                              .update({ status: opt.key })
+                                              .eq('id', lead.id)
+                                              .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+                                            if (error) {
+                                              setStatusMenuOpen(null);
+                                              showAlert('Falha ao atualizar status', 'error');
+                                              toast.error('Falha ao atualizar status');
+                                            } else {
+                                              const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+                                              const updated = {
+                                                id: r.id,
+                                                cliente: r.cliente,
+                                                sku: r.sku,
+                                                category: r.category,
+                                                pricingId: r.pricingid,
+                                                precoLiquido: r.precoliquido,
+                                                precoBruto: r.precobruto,
+                                                margemBruta: r.margembruta,
+                                                volume: r.volume,
+                                                status: r.status,
+                                                createdAt: r.createdat,
+                                              };
+                                              setLeads(leads.map(l => l.id === lead.id ? updated : l));
+                                              if (opt.key === 'aprovado') {
+                                                setShowMoney(true);
+                                                setTimeout(() => setShowMoney(false), 2500);
+                                              }
+                                              setStatusMenuOpen(null);
+                                              showAlert('Status atualizado com sucesso', 'success');
+                                              toast.success('Status atualizado');
                                             }
-                                            setStatusMenuOpen(null);
-                                            showAlert('Status atualizado com sucesso', 'success');
-                                            toast.success('Status atualizado');
-                                          }
-                                        })();
+                                          })();
+                                        }
                                       }}
                                     >
                                       {opt.label}
@@ -1011,17 +1048,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       {alert?.show && (
         <div className="fixed bottom-4 right-4 z-[60]">
           {(() => {
-            const colorMap = {
-              success: 'var(--color-success)',
-              error: 'var(--color-danger)',
-              danger: 'var(--color-danger)',
-              info: 'var(--color-info)'
-            };
-            const bgMap = {
-              success: 'rgba(100, 208, 32, 0.15)',
-              error: 'rgba(255, 86, 86, 0.15)',
-              danger: 'rgba(255, 86, 86, 0.15)',
-              info: 'rgba(26, 198, 252, 0.15)'
+            const typeClasses = {
+              success: 'bg-green-100 dark:bg-green-900/30 border-green-500 text-green-700 dark:text-green-400',
+              error: 'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-400',
+              danger: 'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-400',
+              info: 'bg-blue-100 dark:bg-blue-900/30 border-blue-500 text-blue-700 dark:text-blue-400'
             };
             const iconMap = {
               success: <CheckCircle size={16} />,
@@ -1029,13 +1060,14 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               danger: <AlertTriangle size={16} />,
               info: <Info size={16} />
             };
-            const c = colorMap[alert.type] || 'var(--color-info)';
-            const bg = bgMap[alert.type] || 'rgba(26, 198, 252, 0.15)';
+            
+            const classes = typeClasses[alert.type] || typeClasses.info;
             const ic = iconMap[alert.type] || <Info size={16} />;
+            
             return (
-              <div className="p-3 rounded-lg shadow flex items-center gap-2" style={{ backgroundColor: bg, border: `1px solid ${c}` }}>
-                <div style={{ color: c }}>{ic}</div>
-                <p className="text-sm" style={{ color: c }}>{alert.message}</p>
+              <div className={`p-3 rounded-lg shadow flex items-center gap-2 border ${classes}`}>
+                <div>{ic}</div>
+                <p className="text-sm font-medium">{alert.message}</p>
               </div>
             );
           })()}
@@ -1044,21 +1076,21 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
       {/* Modal */}
       {isConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }} onClick={() => setIsConfirmOpen(false)}>
-          <div className="card-pronutrition max-w-md w-full fade-in" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setIsConfirmOpen(false)}>
+          <div className="card-pronutrition max-w-md w-full fade-in dark:bg-[#171717] dark:border dark:border-gray-800" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">
                 Confirmar exclusão
               </h3>
-              <button onClick={() => setIsConfirmOpen(false)} className="p-2 rounded-lg hover:bg-gray-100 transition-colors" style={{ color: 'var(--color-text-secondary)' }}>
+              <button onClick={() => setIsConfirmOpen(false)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400">
                 <X size={20} />
               </button>
             </div>
-            <p style={{ color: 'var(--color-text-secondary)' }}>
+            <p className="text-gray-600 dark:text-gray-300">
               Tem certeza que deseja excluir este preço?
             </p>
             <div className="flex justify-end space-x-3 pt-4">
-              <button type="button" onClick={() => setIsConfirmOpen(false)} className="px-6 py-3 rounded-lg font-semibold transition-colors" style={{ backgroundColor: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)' }}>
+              <button type="button" onClick={() => setIsConfirmOpen(false)} className="px-6 py-3 rounded-lg font-semibold transition-colors bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">
                 Cancelar
               </button>
               <button type="button" onClick={confirmDelete} className="btn-danger">
@@ -1069,21 +1101,19 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         </div>
       )}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
              onClick={closeModal}>
-          <div className="card-pronutrition max-w-2xl w-full fade-in"
+          <div className="card-pronutrition max-w-2xl w-full fade-in dark:bg-[#171717] dark:border dark:border-gray-800"
                style={{ padding: '1.5rem' }}
                onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                {editingLead ? 'Editar Preço' : 'Adicionar Novo Preço'}
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                {editingLead ? 'Editar Preço' : 'Novo Preço'}
               </h2>
               <button
                 onClick={closeModal}
-                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                style={{ color: 'var(--color-text-secondary)' }}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400"
               >
                 <X size={24} />
               </button>
@@ -1093,7 +1123,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Cliente */}
               <div>
-                <label htmlFor="cliente" className="label-pronutrition">
+                <label htmlFor="cliente" className="label-pronutrition dark:text-gray-300">
                   Nome do Cliente
                 </label>
                 <input
@@ -1101,7 +1131,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   name="cliente"
                   type="text"
                   required
-                  className="input-pronutrition"
+                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                   style={{ padding: '0.75rem' }}
                   placeholder="Ex: Farmácia São Paulo LTDA"
                   value={formData.cliente}
@@ -1111,7 +1141,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
               {/* SKU */}
               <div>
-                <label htmlFor="sku" className="label-pronutrition">
+                <label htmlFor="sku" className="label-pronutrition dark:text-gray-300">
                   SKU
                 </label>
                 <input
@@ -1119,7 +1149,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   name="sku"
                   type="text"
                   required
-                  className="input-pronutrition"
+                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                   style={{ padding: '0.75rem' }}
                   placeholder="Ex: PRO-WHEY-1KG"
                   value={formData.sku}
@@ -1127,8 +1157,48 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 />
               </div>
 
+              {/* Categoria */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="category" className="label-pronutrition dark:text-gray-300">
+                    Categoria
+                  </label>
+                  <select
+                    id="category"
+                    name="category"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                    style={{ padding: '0.75rem' }}
+                    value={formData.category}
+                    onChange={handleChange}
+                  >
+                    <option value="">Selecione...</option>
+                    {CATEGORY_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="subcategory" className="label-pronutrition dark:text-gray-300">
+                    Subcategoria
+                  </label>
+                  <select
+                    id="subcategory"
+                    name="subcategory"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                    style={{ padding: '0.75rem' }}
+                    value={formData.subcategory}
+                    onChange={handleChange}
+                  >
+                    <option value="">Selecione...</option>
+                    {SUBCATEGORY_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label htmlFor="pricingId" className="label-pronutrition">
+                <label htmlFor="pricingId" className="label-pronutrition dark:text-gray-300">
                   ID da Precificação
                 </label>
                 <input
@@ -1136,7 +1206,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   name="pricingId"
                   type="text"
                   required
-                  className="input-pronutrition"
+                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                   style={{ padding: '0.75rem' }}
                   placeholder="Ex: PRC-2025-0001"
                   value={formData.pricingId}
@@ -1147,7 +1217,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               {/* Preços (lado a lado) */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="precoLiquido" className="label-pronutrition">
+                  <label htmlFor="precoLiquido" className="label-pronutrition dark:text-gray-300">
                     Preço Líquido (R$)
                   </label>
                   <input
@@ -1156,7 +1226,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     type="number"
                     step="0.01"
                     required
-                    className="input-pronutrition"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                     style={{ padding: '0.75rem' }}
                     placeholder="89.90"
                     value={formData.precoLiquido}
@@ -1165,7 +1235,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 </div>
 
                 <div>
-                  <label htmlFor="precoBruto" className="label-pronutrition">
+                  <label htmlFor="precoBruto" className="label-pronutrition dark:text-gray-300">
                     Preço Bruto (R$)
                   </label>
                   <input
@@ -1174,7 +1244,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     type="number"
                     step="0.01"
                     required
-                    className="input-pronutrition"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                     style={{ padding: '0.75rem' }}
                     placeholder="129.90"
                     value={formData.precoBruto}
@@ -1186,7 +1256,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               {/* Margem e Volume (lado a lado) */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="margemBruta" className="label-pronutrition">
+                  <label htmlFor="margemBruta" className="label-pronutrition dark:text-gray-300">
                     Margem Bruta (%)
                   </label>
                   <input
@@ -1195,7 +1265,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     type="number"
                     step="0.1"
                     required
-                    className="input-pronutrition"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                     style={{ padding: '0.75rem' }}
                     placeholder="30.8"
                     value={formData.margemBruta}
@@ -1204,7 +1274,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 </div>
 
                 <div>
-                  <label htmlFor="volume" className="label-pronutrition">
+                  <label htmlFor="volume" className="label-pronutrition dark:text-gray-300">
                     Volume
                   </label>
                   <input
@@ -1212,7 +1282,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     name="volume"
                     type="number"
                     required
-                    className="input-pronutrition"
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                     style={{ padding: '0.75rem' }}
                     placeholder="500"
                     value={formData.volume}
@@ -1226,11 +1296,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="px-6 py-3 rounded-lg font-semibold transition-colors"
-                  style={{ 
-                    backgroundColor: 'var(--color-bg-secondary)',
-                    color: 'var(--color-text-secondary)'
-                  }}
+                  className="px-6 py-3 rounded-lg font-semibold transition-colors bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                   Cancelar
                 </button>
@@ -1243,6 +1309,57 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {isRejectionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setIsRejectionModalOpen(false)}>
+          <div className="card-pronutrition max-w-md w-full fade-in dark:bg-[#171717] dark:border dark:border-gray-800" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                Reprovar Preço
+              </h3>
+              <button onClick={() => setIsRejectionModalOpen(false)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+              Selecione o motivo da reprovação para o SKU <strong>{leadToReject?.sku}</strong>
+            </p>
+            
+            <div className="space-y-3">
+              {['Fora do target', 'Desistência do projeto', 'Seguiu com concorrente'].map(reason => (
+                <label key={reason} className="flex items-center space-x-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+                  <input
+                    type="radio"
+                    name="rejectionReason"
+                    value={reason}
+                    checked={rejectionReason === reason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    className="w-4 h-4 text-red-600 border-gray-300 focus:ring-red-500"
+                  />
+                  <span className="text-gray-700 dark:text-gray-200">{reason}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex justify-end space-x-3 pt-6">
+              <button 
+                type="button" 
+                onClick={() => setIsRejectionModalOpen(false)} 
+                className="px-4 py-2 rounded-lg font-semibold transition-colors bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button" 
+                onClick={handleRejectionSubmit} 
+                className="px-4 py-2 rounded-lg font-semibold transition-colors bg-red-600 hover:bg-red-700 text-white shadow-sm"
+                disabled={!rejectionReason}
+              >
+                Confirmar Reprovação
+              </button>
+            </div>
           </div>
         </div>
       )}

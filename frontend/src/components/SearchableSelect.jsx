@@ -27,8 +27,8 @@ const SearchableSelect = ({ options, value, onChange, placeholder, searchPlaceho
         <button
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between flex items-center px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
-          style={{ color: value ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}
+          className="w-full justify-between flex items-center px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-gray-100"
+          style={{}}
         >
           {value ? selectedLabel : placeholder}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />

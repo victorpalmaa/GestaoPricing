@@ -6,10 +6,10 @@ import {
   Bell, 
   LogOut, 
   ArrowLeft, 
-  User,
   CheckCircle,
   AlertCircle,
-  FileText
+  FileText,
+  Info
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -20,9 +20,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { supabase } from '@/lib/utils';
+import { fetchNotifications, markNotificationAsRead } from '@/utils/notifications';
+import { formatDistanceToNow } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 const Header = ({ 
   user, 
@@ -45,16 +47,27 @@ const Header = ({
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  const loadNotifications = async () => {
+    const data = await fetchNotifications();
+    setNotifications(data);
+    setUnreadCount(data.filter(n => !n.read).length);
+  };
+
   useEffect(() => {
-    // Mock notifications based on system status (simulated as requested)
-    // In a real scenario, this would fetch from a 'notifications' table or listen to Supabase subscriptions
-    const mockNotifications = [
-      { id: 1, type: 'approval', message: 'Novo preço aprovado: Ajinomoto', time: '10 min atrás', read: false },
-      { id: 2, type: 'lead', message: 'Novo lead criado: Proteína Vegana', time: '1 hora atrás', read: false },
-      { id: 3, type: 'import', message: 'Importação de tabela finalizada', time: '2 horas atrás', read: true },
-    ];
-    setNotifications(mockNotifications);
-    setUnreadCount(mockNotifications.filter(n => !n.read).length);
+    loadNotifications();
+    
+    // Set up real-time subscription
+    const subscription = supabase
+      .channel('public:notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        setNotifications(prev => [payload.new, ...prev]);
+        setUnreadCount(prev => prev + 1);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
   }, []);
 
   const toggleTheme = () => {
@@ -69,32 +82,57 @@ const Header = ({
     navigate('/login');
   };
 
+  const handleNotificationClick = async (notif) => {
+    if (!notif.read) {
+      await markNotificationAsRead(notif.id);
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    }
+  };
+
   const getInitials = (name) => {
     if (!name) return 'U';
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
   };
 
-  const userEmail = user?.email || user?.user_metadata?.email || 'usuario@exemplo.com';
-  const userName = user?.user_metadata?.name || userEmail.split('@')[0];
+  const userEmail = user?.email || user?.user_metadata?.email || 'usuario@pronutrition.com.br';
+  // Tenta pegar nome e sobrenome do metadata, ou usa o nome completo, ou fallback para email
+  const firstName = user?.user_metadata?.nome || user?.user_metadata?.first_name || '';
+  const lastName = user?.user_metadata?.sobrenome || user?.user_metadata?.last_name || '';
+  const fullName = firstName && lastName 
+    ? `${firstName} ${lastName}` 
+    : (user?.user_metadata?.name || user?.user_metadata?.full_name || userEmail.split('@')[0]);
 
   return (
-    <header className={`bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-colors duration-200 ${className}`}>
+    <header className={`bg-white dark:bg-[#0a0a0a] border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50 transition-colors duration-200 ${className}`}>
       <div className="flex items-center gap-4">
         {showBack && (
           <Button 
             variant="ghost" 
-            size="sm" 
+            size="icon" 
             onClick={() => navigate(backPath)}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+            className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full h-10 w-10"
+            title="Voltar"
           >
-            <ArrowLeft className="h-5 w-5 mr-1" />
-            Voltar
+            <ArrowLeft className="h-6 w-6" />
           </Button>
         )}
         
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{title}</h1>
-          {subtitle && <p className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
+        <div className="flex items-center gap-4">
+           {/* Logo - Added as requested */}
+           <img 
+            src="/logo-pronutrition-symbol.png" 
+            alt="PRONUTRITION" 
+            className="h-10 w-auto"
+            onError={(e) => {
+              e.target.style.display = 'none';
+              // Fallback if image fails
+            }}
+          />
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{title}</h1>
+            {subtitle && <p className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
+          </div>
         </div>
       </div>
 
@@ -135,7 +173,11 @@ const Header = ({
                 </div>
               ) : (
                 notifications.map((notif) => (
-                  <DropdownMenuItem key={notif.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 p-3 focus:bg-gray-50 dark:focus:bg-gray-800">
+                  <DropdownMenuItem 
+                    key={notif.id} 
+                    className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 p-3 focus:bg-gray-50 dark:focus:bg-gray-800"
+                    onClick={() => handleNotificationClick(notif)}
+                  >
                     <div className="flex items-start gap-3 w-full">
                       <div className={`mt-1 h-2 w-2 rounded-full ${notif.read ? 'bg-transparent' : 'bg-blue-500'}`} />
                       <div className="flex-1 space-y-1">
@@ -143,9 +185,12 @@ const Header = ({
                           {notif.type === 'approval' && <CheckCircle className="inline h-3 w-3 mr-1 text-green-500" />}
                           {notif.type === 'lead' && <FileText className="inline h-3 w-3 mr-1 text-blue-500" />}
                           {notif.type === 'import' && <AlertCircle className="inline h-3 w-3 mr-1 text-yellow-500" />}
+                          {notif.type === 'system' && <Info className="inline h-3 w-3 mr-1 text-gray-500" />}
                           {notif.message}
                         </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">{notif.time}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatDistanceToNow(new Date(notif.created_at), { addSuffix: true, locale: ptBR })}
+                        </p>
                       </div>
                     </div>
                   </DropdownMenuItem>
@@ -160,17 +205,21 @@ const Header = ({
         {/* User Profile */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+            <Button variant="ghost" className="relative h-12 flex items-center gap-3 px-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
+               <div className="flex flex-col items-end hidden md:flex">
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{fullName}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">{userEmail}</span>
+              </div>
               <Avatar className="h-9 w-9 border border-gray-200 dark:border-gray-700">
-                <AvatarImage src={user?.user_metadata?.avatar_url} alt={userName} />
-                <AvatarFallback className="bg-primary/10 text-primary">{getInitials(userName)}</AvatarFallback>
+                <AvatarImage src={user?.user_metadata?.avatar_url} alt={fullName} />
+                <AvatarFallback className="bg-primary/10 text-primary">{getInitials(fullName)}</AvatarFallback>
               </Avatar>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800" align="end" forceMount>
             <DropdownMenuLabel className="font-normal">
               <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none text-gray-900 dark:text-white">{userName}</p>
+                <p className="text-sm font-medium leading-none text-gray-900 dark:text-white">{fullName}</p>
                 <p className="text-xs leading-none text-gray-500 dark:text-gray-400">
                   {userEmail}
                 </p>

@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/popover"
 import SearchableSelect from './SearchableSelect';
 
+import Header from './Header';
+
 const PricingAnalytics = ({ user, setUser }) => {
   const navigate = useNavigate();
   const [pricingData, setPricingData] = useState([]);
@@ -88,8 +90,35 @@ const PricingAnalytics = ({ user, setUser }) => {
 
       // Removidos filtros de cliente/SKU daqui para permitir filtragem dinâmica em memória
       
-      const { data: pricingData } = await query;
-      setPricingData(pricingData || []);
+      const { data: pricingDataRaw } = await query;
+      
+      // Aplicar lógica de normalização de categorias (mesma do Dashboard)
+      const enrichedData = (pricingDataRaw || []).map(item => {
+        let category = item.category;
+        let subcategory = item.subcategory;
+        
+        const validCategories = ['Pó', 'Cápsula', 'Gel', 'Pastilha'];
+        if (!validCategories.includes(category)) {
+          const checkStr = (subcategory || category || '').toLowerCase();
+          
+          if (checkStr.includes('creatina') || checkStr.includes('colágeno') || checkStr.includes('glutamina') || checkStr.includes('proteína') || checkStr.includes('whey') || checkStr.includes('pre-workout')) {
+             category = 'Pó';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('gel')) {
+             category = 'Gel';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('cápsula') || checkStr.includes('capsula') || checkStr.includes('softgel')) {
+             category = 'Cápsula';
+             if (!subcategory && item.category) subcategory = item.category;
+          } else if (checkStr.includes('pastilha') || checkStr.includes('gummy')) {
+             category = 'Pastilha';
+             if (!subcategory && item.category) subcategory = item.category;
+          }
+        }
+        return { ...item, category, subcategory };
+      });
+
+      setPricingData(enrichedData);
 
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -182,12 +211,14 @@ const PricingAnalytics = ({ user, setUser }) => {
     safePricingData.forEach(item => {
       const date = item.date;
       if (!dailyData[date]) {
-        dailyData[date] = { date, totalPrice: 0, totalMargin: 0, count: 0, prices: [] };
+        dailyData[date] = { date, totalPrice: 0, totalGrossPrice: 0, totalMargin: 0, count: 0, prices: [] };
       }
       const netPrice = Number(item.net_price || 0);
+      const grossPrice = Number(item.gross_price || 0);
       const margin = Number(item.margin_budget || 0);
       
       dailyData[date].totalPrice += netPrice;
+      dailyData[date].totalGrossPrice += grossPrice;
       dailyData[date].totalMargin += margin;
       dailyData[date].count += 1;
       dailyData[date].prices.push(netPrice);
@@ -197,7 +228,7 @@ const PricingAnalytics = ({ user, setUser }) => {
       .map(day => ({
         date: day.date,
         formattedDate: format(new Date(day.date), 'MMM/yy', { locale: ptBR }),
-        avgPrice: day.count > 0 ? parseFloat((day.totalPrice / day.count).toFixed(2)) : 0,
+        avgPrice: day.count > 0 ? parseFloat((day.totalGrossPrice / day.count).toFixed(2)) : 0,
         avgMargin: day.count > 0 ? parseFloat((day.totalMargin / day.count).toFixed(1)) : 0,
         totalPrice: parseFloat(day.totalPrice.toFixed(2)),
         count: day.count
@@ -209,14 +240,15 @@ const PricingAnalytics = ({ user, setUser }) => {
     safePricingData.forEach(item => {
       const clientName = item.clients?.name || 'Desconhecido';
       if (!clientData[clientName]) {
-        clientData[clientName] = { name: clientName, total: 0, count: 0, avgPrice: 0 };
+        clientData[clientName] = { name: clientName, total: 0, totalGross: 0, count: 0, avgPrice: 0 };
       }
       clientData[clientName].total += Number(item.net_price || 0);
+      clientData[clientName].totalGross += Number(item.gross_price || 0);
       clientData[clientName].count += 1;
     });
 
     Object.values(clientData).forEach(client => {
-      client.avgPrice = client.count > 0 ? parseFloat((client.total / client.count).toFixed(2)) : 0;
+      client.avgPrice = client.count > 0 ? parseFloat((client.totalGross / client.count).toFixed(2)) : 0;
     });
 
     const topClients = Object.values(clientData)
@@ -227,15 +259,16 @@ const PricingAnalytics = ({ user, setUser }) => {
     const skuData = {};
     safePricingData.forEach(item => {
       if (!skuData[item.sku]) {
-        skuData[item.sku] = { sku: item.sku, total: 0, count: 0, avgPrice: 0, avgMargin: 0, marginTotal: 0 };
+        skuData[item.sku] = { sku: item.sku, total: 0, totalGross: 0, count: 0, avgPrice: 0, avgMargin: 0, marginTotal: 0 };
       }
       skuData[item.sku].total += Number(item.net_price || 0);
+      skuData[item.sku].totalGross += Number(item.gross_price || 0);
       skuData[item.sku].count += 1;
       skuData[item.sku].marginTotal += Number(item.margin_budget || 0);
     });
 
     Object.values(skuData).forEach(sku => {
-      sku.avgPrice = sku.count > 0 ? parseFloat((sku.total / sku.count).toFixed(2)) : 0;
+      sku.avgPrice = sku.count > 0 ? parseFloat((sku.totalGross / sku.count).toFixed(2)) : 0;
       sku.avgMargin = sku.count > 0 ? parseFloat((sku.marginTotal / sku.count).toFixed(1)) : 0;
     });
 
@@ -299,89 +332,47 @@ const PricingAnalytics = ({ user, setUser }) => {
       marginData,
       totalRevenue: safePricingData.reduce((sum, item) => sum + Number(item.net_price || 0), 0),
       totalRecords: safePricingData.length,
-      lastPriceDate: safePricingData.length > 0 ? format(new Date(Math.max(...safePricingData.map(d => new Date(d.date)))), 'dd/MM/yyyy') : '-',
-      avgPrice: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.net_price || 0), 0) / safePricingData.length).toFixed(2) : 0,
+      // Use pricingData (unfiltered by local filters) for global counts within the loaded date range
+      totalSKUs: new Set(pricingData.map(item => item.code).filter(Boolean)).size,
+      totalClients: new Set(pricingData.map(item => item.client_id)).size,
+      lastPriceDate: safePricingData.length > 0 ? format(new Date(Math.max(...safePricingData.map(d => new Date(d.date + 'T12:00:00')))), 'MMM/yy', { locale: ptBR }) : '-',
+      avgPrice: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.gross_price || 0), 0) / safePricingData.length).toFixed(2) : 0,
       avgMargin: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.margin_budget || 0), 0) / safePricingData.length).toFixed(1) : 0,
       currencySymbol,
-      benchmarkData
+      benchmarkData,
+      skuFromCode: datasulCode ? (safePricingData.find(item => item.code && item.code.includes(datasulCode))?.sku || '-') : null
     };
-  }, [filteredPricingData, pricingData, selectedCategory, selectedClient, clients]);
+  }, [filteredPricingData, pricingData, selectedCategory, selectedClient, clients, datasulCode]);
 
   // Cores para gráficos
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
         <div className="text-center">
-          <div className="inline-block h-12 w-12 animate-spin rounded-full border-4 border-solid border-current border-r-transparent" style={{ color: 'var(--color-primary)' }}></div>
-          <p className="mt-4" style={{ color: 'var(--color-text-secondary)' }}>Carregando analytics...</p>
+          <div className="inline-block h-12 w-12 animate-spin rounded-full border-4 border-solid border-current border-r-transparent text-primary dark:text-primary"></div>
+          <p className="mt-4 text-gray-500 dark:text-gray-400">Carregando analytics...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-      {/* Botão Voltar */}
-      <div className="bg-white border-b border-gray-200">
-         <div className="max-w-[110rem] mx-auto px-6 py-2 flex justify-end">
-            <button 
-              onClick={() => navigate('/pricing/dashboard')}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              <ArrowLeft size={16} />
-              Voltar
-            </button>
-         </div>
-      </div>
-
-      {/* Header padronizado */}
-      <header className="">
-        <div className="max-w-[110rem] mx-auto px-6 py-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <img 
-                src="/logo-pronutrition-symbol.png" 
-                alt="PRONUTRITION" 
-                className="h-20"
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                  e.target.nextSibling.style.display = 'block';
-                }}
-              />
-              <div style={{ display: 'none', fontSize: '1.75rem', fontWeight: 'bold', color: 'var(--color-primary)' }}>
-                PN
-              </div>
-              <div>
-                <h2 className="text-3xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                  Pricing Analytics
-                </h2>
-                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  Dashboard de Análises e Inteligência de Dados
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                  {user?.nome || user?.user_metadata?.nome} {user?.sobrenome || user?.user_metadata?.sobrenome}
-                </p>
-                <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                  {user?.area || user?.user_metadata?.area}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
+      <Header 
+        user={user} 
+        title="Pricing Analytics" 
+        subtitle="Dashboard de Análises e Inteligência de Dados" 
+        showBack={true} 
+        backPath="/pricing/dashboard"
+      />
 
       {/* Filtros */}
       <div className="max-w-[110rem] mx-auto px-6 py-4">
-        <div className="bg-white rounded-lg p-6 shadow-sm mb-6 card-pronutrition hover-lift">
+        <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm mb-6 card-pronutrition hover-lift transition-colors duration-200">
           <div className="flex items-center gap-4 mb-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-gray-900 dark:text-white">
               <Filter size={20} />
               Filtros de Análise
             </h3>
@@ -396,7 +387,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                   setDatasulCode('');
                   setDateRange({ start: '', end: '' });
                 }}
-                className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
+                className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-400 rounded-full transition-colors"
               >
                 <X size={14} />
                 Limpar
@@ -405,7 +396,7 @@ const PricingAnalytics = ({ user, setUser }) => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 SKU
               </label>
               <SearchableSelect
@@ -420,7 +411,7 @@ const PricingAnalytics = ({ user, setUser }) => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Cliente
               </label>
               <SearchableSelect
@@ -435,7 +426,7 @@ const PricingAnalytics = ({ user, setUser }) => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Código Datasul
               </label>
               <input
@@ -445,12 +436,12 @@ const PricingAnalytics = ({ user, setUser }) => {
                   setDatasulCode(e.target.value);
                   // Não limpa outros filtros
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                 placeholder="Filtrar por código..."
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Categoria
               </label>
               <SearchableSelect
@@ -465,7 +456,7 @@ const PricingAnalytics = ({ user, setUser }) => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Subcategoria
               </label>
               <SearchableSelect
@@ -480,7 +471,7 @@ const PricingAnalytics = ({ user, setUser }) => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Tamanho
               </label>
               <SearchableSelect
@@ -495,94 +486,110 @@ const PricingAnalytics = ({ user, setUser }) => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Data Inicial
               </label>
               <input
                 type="date"
                 value={dateRange.start}
                 onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Data Final
               </label>
               <input
                 type="date"
                 value={dateRange.end}
                 onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
               />
             </div>
           </div>
         </div>
 
         {/* Cards de Métricas */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
-            <div className="flex items-center justify-between">
+        <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8`}>
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-4 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+            <div className="flex flex-col items-center justify-center text-center gap-2">
+              <Calendar className="text-blue-500 mb-1" size={38} />
               <div>
-                <p className="text-sm text-gray-600">Data do último preço vigente</p>
-                <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-0.5">Data do último preço vigente</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {chartData.lastPriceDate}
                 </p>
               </div>
-              <Calendar className="text-blue-500" size={32} />
             </div>
           </div>
-          <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
-            <div className="flex items-center justify-between">
+
+          {datasulCode && (
+            <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-4 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+              <div className="flex flex-col items-center justify-center text-center gap-2">
+                <Package className="text-indigo-500 mb-1" size={38} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-0.5">SKU</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {chartData.skuFromCode}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-4 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+            <div className="flex flex-col items-center justify-center text-center gap-2">
+              <TrendingUp className="text-yellow-500 mb-1" size={38} />
               <div>
-                <p className="text-sm text-gray-600">Preço Médio</p>
-                <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-0.5">Preço Médio</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {chartData.currencySymbol} {chartData.avgPrice}
                 </p>
               </div>
-              <TrendingUp className="text-yellow-500" size={32} />
             </div>
           </div>
-          <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
-            <div className="flex items-center justify-between">
+
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-4 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+            <div className="flex flex-col items-center justify-center text-center gap-2">
+              <BarChart3 className="text-purple-500 mb-1" size={38} />
               <div>
-                <p className="text-sm text-gray-600">Margem Média</p>
-                <p className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-0.5">Margem Média</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {chartData.avgMargin}%
                 </p>
               </div>
-              <BarChart3 className="text-purple-500" size={32} />
             </div>
           </div>
         </div>
 
         {/* Benchmarking Interno Card */}
         {chartData.benchmarkData && (
-          <div className="bg-white rounded-lg p-6 shadow-sm mb-8 card-pronutrition hover-lift">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm mb-8 card-pronutrition hover-lift transition-colors duration-200">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-gray-900 dark:text-white">
               <Scale size={20} className="text-blue-600" />
               Benchmarking Interno de Margens
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
-                <p className="text-sm text-gray-500 mb-1">Média da Categoria ({selectedCategory || 'Todas'})</p>
-                <p className="text-2xl font-bold text-gray-800">{chartData.benchmarkData.categoryAvg.toFixed(1)}%</p>
+              <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Média da Categoria ({selectedCategory || 'Todas'})</p>
+                <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">{chartData.benchmarkData.categoryAvg.toFixed(1)}%</p>
               </div>
               
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-100">
-                <p className="text-sm text-gray-500 mb-1">Média {chartData.benchmarkData.clientName}</p>
-                <p className="text-2xl font-bold text-gray-800">{chartData.benchmarkData.clientAvg.toFixed(1)}%</p>
+              <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Média {chartData.benchmarkData.clientName}</p>
+                <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">{chartData.benchmarkData.clientAvg.toFixed(1)}%</p>
               </div>
 
-              <div className={`p-4 rounded-lg border ${chartData.benchmarkData.diff >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-                <p className={`text-sm mb-1 ${chartData.benchmarkData.diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`p-4 rounded-lg border ${chartData.benchmarkData.diff >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-900' : 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900'}`}>
+                <p className={`text-sm mb-1 ${chartData.benchmarkData.diff >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   Diferencial Competitivo
                 </p>
                 <div className="flex items-center gap-2">
-                  <span className={`text-2xl font-bold ${chartData.benchmarkData.diff >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                  <span className={`text-2xl font-bold ${chartData.benchmarkData.diff >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
                     {chartData.benchmarkData.diff > 0 ? '+' : ''}{chartData.benchmarkData.diff.toFixed(1)}%
                   </span>
-                  <span className={`text-sm px-2 py-1 rounded-full ${chartData.benchmarkData.diff >= 0 ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
+                  <span className={`text-sm px-2 py-1 rounded-full ${chartData.benchmarkData.diff >= 0 ? 'bg-green-200 dark:bg-green-900/50 text-green-800 dark:text-green-200' : 'bg-red-200 dark:bg-red-900/50 text-red-800 dark:text-red-200'}`}>
                     {chartData.benchmarkData.diff >= 0 ? 'Acima da Média' : 'Abaixo da Média'}
                   </span>
                 </div>
@@ -594,8 +601,8 @@ const PricingAnalytics = ({ user, setUser }) => {
         {/* Gráficos de Evolução */}
         <div className="grid grid-cols-1 gap-6 mb-8">
           {/* Gráfico de Preço */}
-          <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-gray-900 dark:text-white">
               <TrendingUp size={20} />
               {selectedSKU ? `Evolução de Preço - ${selectedSKU}` : 'Evolução do Preço Médio'}
             </h3>
@@ -604,29 +611,33 @@ const PricingAnalytics = ({ user, setUser }) => {
                 <AreaChart data={chartData.evolutionData}>
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.1}/>
+                      <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.3}/>
                       <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0}/>
                     </linearGradient>
+                    <filter id="shadowPrice" height="200%">
+                      <feDropShadow dx="0" dy="5" stdDeviation="5" floodColor="var(--color-primary)" floodOpacity="0.3"/>
+                    </filter>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={false} strokeOpacity={0} />
                   <XAxis 
                     dataKey="formattedDate" 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{ fill: '#6B7280', fontSize: 12 }} 
+                    tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     dy={10}
                     interval="preserveStartEnd"
                   />
                   <YAxis 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{ fill: '#6B7280', fontSize: 12 }} 
+                    tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     tickFormatter={(value) => `${chartData.currencySymbol} ${value}`} 
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    contentStyle={{ backgroundColor: 'var(--color-bg-card)', borderRadius: '8px', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}
+                    itemStyle={{ color: 'var(--color-text-primary)' }}
                     formatter={(value) => [`${chartData.currencySymbol} ${Number(value).toFixed(2)}`, 'Preço']}
-                    labelStyle={{ color: '#374151', marginBottom: '0.5rem' }}
+                    labelStyle={{ color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}
                   />
                   <Legend />
                   <Area 
@@ -636,6 +647,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                     strokeWidth={3} 
                     fillOpacity={1} 
                     fill="url(#colorPrice)" 
+                    filter="url(#shadowPrice)"
                     name="Preço"
                     activeDot={{ r: 6, strokeWidth: 0 }}
                   />
@@ -645,8 +657,8 @@ const PricingAnalytics = ({ user, setUser }) => {
           </div>
 
           {/* Gráfico de Margem */}
-          <div className="bg-white rounded-lg p-6 shadow-sm card-pronutrition hover-lift">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm card-pronutrition hover-lift transition-colors duration-200">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-gray-900 dark:text-white">
               <BarChart3 size={20} />
               {selectedSKU ? `Evolução de Margem - ${selectedSKU}` : 'Evolução da Margem Média'}
             </h3>
@@ -655,29 +667,33 @@ const PricingAnalytics = ({ user, setUser }) => {
                 <AreaChart data={chartData.evolutionData}>
                   <defs>
                     <linearGradient id="colorMargin" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.1}/>
+                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
                       <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
                     </linearGradient>
+                    <filter id="shadowMargin" height="200%">
+                      <feDropShadow dx="0" dy="5" stdDeviation="5" floodColor="#10B981" floodOpacity="0.3"/>
+                    </filter>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={false} strokeOpacity={0} />
                   <XAxis 
                     dataKey="formattedDate" 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{ fill: '#6B7280', fontSize: 12 }} 
+                    tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     dy={10}
                     interval="preserveStartEnd"
                   />
                   <YAxis 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{ fill: '#6B7280', fontSize: 12 }} 
+                    tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     tickFormatter={(value) => `${value}%`} 
                   />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    contentStyle={{ backgroundColor: 'var(--color-bg-card)', borderRadius: '8px', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}
+                    itemStyle={{ color: 'var(--color-text-primary)' }}
                     formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Margem']}
-                    labelStyle={{ color: '#374151', marginBottom: '0.5rem' }}
+                    labelStyle={{ color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}
                   />
                   <Legend />
                   <Area 
@@ -687,6 +703,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                     strokeWidth={3} 
                     fillOpacity={1} 
                     fill="url(#colorMargin)" 
+                    filter="url(#shadowMargin)"
                     name="Margem"
                     activeDot={{ r: 6, strokeWidth: 0 }}
                   />
