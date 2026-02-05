@@ -15,8 +15,8 @@ const CS = ({ user }) => {
         user={user} 
         title="Gestão de Pricing" 
         subtitle="Dados CS" 
-        showBack={true} 
-        backPath="/select"
+        showBack={false} 
+        logoRedirect="/select"
       />
 
       <div className="max-w-4xl mx-auto mt-8 px-6">

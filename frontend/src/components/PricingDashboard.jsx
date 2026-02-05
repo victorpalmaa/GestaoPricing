@@ -788,8 +788,8 @@ const PricingDashboard = ({ user }) => {
         user={user} 
         title="Gestão de Pricing" 
         subtitle="Dados e análises" 
-        showBack={true} 
-        backPath="/select"
+        showBack={false} 
+        logoRedirect="/select"
       />
 
       {/* Action Bar */}
@@ -1074,7 +1074,7 @@ const PricingDashboard = ({ user }) => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Preço liquido
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-700 dark:text-gray-200 uppercase tracking-wider">
                       Preço bruto
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1134,10 +1134,10 @@ const PricingDashboard = ({ user }) => {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.sku}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.net_price) || 0).toFixed(2)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
                           {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.gross_price) || 0).toFixed(2)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">

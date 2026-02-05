@@ -87,7 +87,7 @@ h3 {
 /* Scrollbar customizada - Destacada */
 ::-webkit-scrollbar {
   width: 12px;
-  height: 16px; /* Mais alta para destaque horizontal */
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {

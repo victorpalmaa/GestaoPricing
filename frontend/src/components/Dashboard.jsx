@@ -22,10 +22,13 @@ import {
   AlertTriangle,
   Info,
   Clock,
-  Activity
+  Activity,
+  Check,
+  XCircle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true, canDelete: true }, title = 'Leads' }) => {
   const navigate = useNavigate();
@@ -78,7 +81,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [sortField, setSortField] = useState('');
   const [sortDir, setSortDir] = useState('');
   const [showMoreMetrics, setShowMoreMetrics] = useState(false);
-  const [alert, setAlert] = useState({ show: false, message: '', type: 'info' });
   const [initialLoading, setInitialLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -86,10 +88,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
 
-  const showAlert = (message, type = 'info') => {
-    setAlert({ show: true, message, type });
-    setTimeout(() => setAlert({ show: false, message: '', type: 'info' }), 3000);
-  };
   const [formData, setFormData] = useState({
     cliente: '',
     sku: '',
@@ -265,7 +263,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       margemBruta: parseFloat(formData.margemBruta),
       volume: parseInt(formData.volume),
       status: formData.status,
-      category: formData.category
+      category: formData.category,
+      subcategory: formData.subcategory
     };
 
     if (editingLead) {
@@ -276,6 +275,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             cliente: leadData.cliente,
             sku: leadData.sku,
             category: leadData.category,
+            subcategory: leadData.subcategory,
             pricingid: leadData.pricingId,
             precoliquido: leadData.precoLiquido,
             precobruto: leadData.precoBruto,
@@ -284,9 +284,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             status: leadData.status
           })
           .eq('id', editingLead.id)
-          .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
         if (error) {
-          showAlert(error.message || 'Falha ao atualizar', 'error');
           toast.error('Falha ao atualizar');
         } else {
           const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
@@ -295,6 +294,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             cliente: r.cliente,
             sku: r.sku,
             category: r.category,
+            subcategory: r.subcategory,
             pricingId: r.pricingid,
             precoLiquido: r.precoliquido,
             precoBruto: r.precobruto,
@@ -305,7 +305,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           };
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
           addNotification('update', `Lead atualizado: ${updated.cliente} - ${updated.sku}`, user?.id);
-          showAlert('Lead atualizado com sucesso', 'success');
           toast.success('Lead atualizado');
         }
       })();
@@ -318,6 +317,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               cliente: leadData.cliente,
               sku: leadData.sku,
               category: leadData.category,
+              subcategory: leadData.subcategory,
               pricingid: leadData.pricingId,
               precoliquido: leadData.precoLiquido,
               precobruto: leadData.precoBruto,
@@ -326,9 +326,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               status: leadData.status
             }
           ])
-          .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
         if (error) {
-          showAlert(error.message || 'Falha ao adicionar', 'error');
           toast.error('Falha ao adicionar');
         } else {
           const r = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
@@ -337,6 +336,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             cliente: r.cliente,
             sku: r.sku,
             category: r.category,
+            subcategory: r.subcategory,
             pricingId: r.pricingid,
             precoLiquido: r.precoliquido,
             precoBruto: r.precobruto,
@@ -349,7 +349,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           addNotification('create', `Novo lead adicionado: ${newLead.cliente} - ${newLead.sku}`, user?.id);
           setShowMoney(true);
           setTimeout(() => setShowMoney(false), 3000);
-          showAlert('Lead adicionado com sucesso', 'success');
           toast.success('Lead adicionado');
         }
       })();
@@ -371,7 +370,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         .from('prices')
         .update({ status: 'reprovado' })
         .eq('id', leadToReject.id)
-        .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+        .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
 
       if (updateError) throw updateError;
 
@@ -400,6 +399,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         cliente: r.cliente,
         sku: r.sku,
         category: r.category,
+        subcategory: r.subcategory,
         pricingId: r.pricingid,
         precoLiquido: r.precoliquido,
         precoBruto: r.precobruto,
@@ -410,7 +410,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       };
       setLeads(leads.map(l => l.id === leadToReject.id ? updated : l));
       addNotification('update', `Lead reprovado: ${updated.cliente} - ${updated.sku}`, user?.id);
-      showAlert('Lead reprovado com sucesso', 'success');
       toast.success('Lead reprovado');
       
       // 4. Limpar e fechar
@@ -420,8 +419,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
     } catch (error) {
       console.error('Erro ao reprovar lead:', error);
-      showAlert('Falha ao reprovar lead', 'error');
-      toast.error('Falha ao reprovar lead');
+      toast.error(`Falha ao reprovar lead: ${error.message || 'Erro desconhecido'}`);
     }
   };
 
@@ -438,13 +436,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           .delete()
           .eq('id', leadToDelete);
         if (error) {
-          showAlert('Falha ao excluir', 'error');
           toast.error('Falha ao excluir');
         } else {
           setLeads(leads.filter(l => l.id !== leadToDelete));
           addNotification('delete', 'Lead excluído', user?.id);
           setLeadToDelete(null);
-          showAlert('Lead excluído com sucesso', 'danger');
           toast.success('Lead excluído');
         }
       })();
@@ -486,8 +482,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         user={user} 
         title="Gestão de Pricing" 
         subtitle={title} 
-        showBack={true} 
-        backPath="/select"
+        showBack={false} 
+        logoRedirect="/select"
       />
 
       {/* Money Animation Overlay */}
@@ -528,10 +524,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Total de Leads
+                  Total de Clientes Únicos
                 </p>
                 <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                  {leads.length}
+                  {new Set(leads.map(l => l.cliente)).size}
                 </p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10 text-primary">
@@ -822,7 +818,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     Preço Líquido
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                  <th className="px-6 py-4 text-right text-sm font-bold text-gray-700 dark:text-gray-200 whitespace-nowrap">
                     Preço Bruto
                   </th>
                   <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400">
@@ -870,10 +866,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           {lead.pricingId}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
                         R$ {lead.precoLiquido.toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         R$ {lead.precoBruto.toFixed(2)}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -941,13 +937,13 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   const menuWidth = 224;
                                   const menuHeight = 180;
-                                  let top = rect.bottom + 8 + window.scrollY;
-                                  if (top + menuHeight > window.innerHeight + window.scrollY) {
-                                    top = rect.top - menuHeight - 8 + window.scrollY;
+                                  let top = rect.bottom + 8;
+                                  if (top + menuHeight > window.innerHeight) {
+                                    top = rect.top - menuHeight - 8;
                                   }
-                                  let left = rect.right - menuWidth + window.scrollX;
-                                  const maxLeft = window.innerWidth - menuWidth - 8 + window.scrollX;
-                                  left = Math.min(Math.max(8 + window.scrollX, left), maxLeft);
+                                  let left = rect.right - menuWidth;
+                                  const maxLeft = window.innerWidth - menuWidth - 8;
+                                  left = Math.min(Math.max(8, left), maxLeft);
                                   setStatusMenuPos({ top, left });
                                 }
                                 setStatusMenuOpen(nextOpen);
@@ -960,67 +956,70 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           )}
                           {statusMenuOpen === lead.id && (
                             <>
-                              <div className="fixed inset-0 z-40" onClick={() => setStatusMenuOpen(null)}></div>
-                              <div className="card-pronutrition fixed z-50 w-56 p-2 dark:bg-[#0a0a0a] dark:border-gray-800" style={{ top: statusMenuPos?.top, left: statusMenuPos?.left }} onClick={(e) => e.stopPropagation()}>
-                                <p className="text-sm mb-2 text-gray-500 dark:text-gray-400">Definir status:</p>
-                                <div className="space-y-2">
-                                  {[
-                                    { key: 'em_aberto', label: 'Em aberto', color: 'var(--color-info)' },
-                                    { key: 'aprovado', label: 'Aprovado', color: 'var(--color-success)' },
-                                    { key: 'reprovado', label: 'Reprovado', color: 'var(--color-danger)' },
-                                  ].map(opt => (
-                                    <button
-                                      key={opt.key}
-                                      className="w-full px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-left"
-                                      style={{ color: opt.color }}
-                                      onClick={() => {
-                                        if (opt.key === 'reprovado') {
-                                          setStatusMenuOpen(null);
-                                          setLeadToReject(lead);
-                                          setIsRejectionModalOpen(true);
-                                        } else {
-                                          (async () => {
-                                            const { data: updatedRows, error } = await supabase
-                                              .from('prices')
-                                              .update({ status: opt.key })
-                                              .eq('id', lead.id)
-                                              .select('id, cliente, sku, category, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
-                                            if (error) {
-                                              setStatusMenuOpen(null);
-                                              showAlert('Falha ao atualizar status', 'error');
-                                              toast.error('Falha ao atualizar status');
-                                            } else {
-                                              const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
-                                              const updated = {
-                                                id: r.id,
-                                                cliente: r.cliente,
-                                                sku: r.sku,
-                                                category: r.category,
-                                                pricingId: r.pricingid,
-                                                precoLiquido: r.precoliquido,
-                                                precoBruto: r.precobruto,
-                                                margemBruta: r.margembruta,
-                                                volume: r.volume,
-                                                status: r.status,
-                                                createdAt: r.createdat,
-                                              };
-                                              setLeads(leads.map(l => l.id === lead.id ? updated : l));
-                                              if (opt.key === 'aprovado') {
-                                                setShowMoney(true);
-                                                setTimeout(() => setShowMoney(false), 2500);
-                                              }
-                                              setStatusMenuOpen(null);
-                                              showAlert('Status atualizado com sucesso', 'success');
-                                              toast.success('Status atualizado');
+                              <div className="fixed inset-0 z-[100]" onClick={() => setStatusMenuOpen(null)}></div>
+                              <div 
+                                className="fixed z-[101] w-64 p-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl flex flex-col gap-1 animate-in fade-in zoom-in-95 duration-200" 
+                                style={{ top: statusMenuPos?.top, left: statusMenuPos?.left }} 
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <p className="text-xs font-semibold uppercase tracking-wider mb-2 text-gray-500 dark:text-gray-400 px-2">Definir status</p>
+                                {[
+                                  { key: 'em_aberto', label: 'Em aberto', color: 'text-blue-600 dark:text-blue-400', bgHover: 'hover:bg-blue-50 dark:hover:bg-blue-900/20', icon: Clock },
+                                  { key: 'aprovado', label: 'Aprovado', color: 'text-green-600 dark:text-green-400', bgHover: 'hover:bg-green-50 dark:hover:bg-green-900/20', icon: CheckCircle },
+                                  { key: 'reprovado', label: 'Reprovado', color: 'text-red-600 dark:text-red-400', bgHover: 'hover:bg-red-50 dark:hover:bg-red-900/20', icon: XCircle },
+                                ].map(opt => (
+                                  <button
+                                    key={opt.key}
+                                    className={`w-full px-3 py-2.5 flex items-center gap-3 rounded-lg ${opt.bgHover} transition-all duration-200 group`}
+                                    onClick={() => {
+                                      if (opt.key === 'reprovado') {
+                                        setStatusMenuOpen(null);
+                                        setLeadToReject(lead);
+                                        setIsRejectionModalOpen(true);
+                                      } else {
+                                        (async () => {
+                                          const { data: updatedRows, error } = await supabase
+                                            .from('prices')
+                                            .update({ status: opt.key })
+                                            .eq('id', lead.id)
+                                            .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+                                          if (error) {
+                                            setStatusMenuOpen(null);
+                                            toast.error(`Falha ao atualizar status: ${error.message}`);
+                                          } else {
+                                            const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+                                            const updated = {
+                                              id: r.id,
+                                              cliente: r.cliente,
+                                              sku: r.sku,
+                                              category: r.category,
+                                              subcategory: r.subcategory,
+                                              pricingId: r.pricingid,
+                                              precoLiquido: r.precoliquido,
+                                              precoBruto: r.precobruto,
+                                              margemBruta: r.margembruta,
+                                              volume: r.volume,
+                                              status: r.status,
+                                              createdAt: r.createdat,
+                                            };
+                                            setLeads(leads.map(l => l.id === lead.id ? updated : l));
+                                            if (opt.key === 'aprovado') {
+                                              setShowMoney(true);
+                                              setTimeout(() => setShowMoney(false), 2500);
                                             }
-                                          })();
-                                        }
-                                      }}
-                                    >
-                                      {opt.label}
-                                    </button>
-                                  ))}
-                                </div>
+                                            addNotification('update', `Status alterado: ${updated.cliente} - ${updated.status}`, user?.id);
+                                            setStatusMenuOpen(null);
+                                            toast.success('Status atualizado');
+                                          }
+                                        })();
+                                      }
+                                    }}
+                                  >
+                                    <opt.icon size={18} className={`${opt.color} group-hover:scale-110 transition-transform`} />
+                                    <span className={`text-sm font-medium ${opt.color}`}>{opt.label}</span>
+                                    {lead.status === opt.key && <Check size={16} className="ml-auto text-gray-400" />}
+                                  </button>
+                                ))}
                               </div>
                             </>
                           )}
@@ -1044,35 +1043,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           </div>
         </div>
       </main>
-
-      {alert?.show && (
-        <div className="fixed bottom-4 right-4 z-[60]">
-          {(() => {
-            const typeClasses = {
-              success: 'bg-green-100 dark:bg-green-900/30 border-green-500 text-green-700 dark:text-green-400',
-              error: 'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-400',
-              danger: 'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-400',
-              info: 'bg-blue-100 dark:bg-blue-900/30 border-blue-500 text-blue-700 dark:text-blue-400'
-            };
-            const iconMap = {
-              success: <CheckCircle size={16} />,
-              error: <AlertTriangle size={16} />,
-              danger: <AlertTriangle size={16} />,
-              info: <Info size={16} />
-            };
-            
-            const classes = typeClasses[alert.type] || typeClasses.info;
-            const ic = iconMap[alert.type] || <Info size={16} />;
-            
-            return (
-              <div className={`p-3 rounded-lg shadow flex items-center gap-2 border ${classes}`}>
-                <div>{ic}</div>
-                <p className="text-sm font-medium">{alert.message}</p>
-              </div>
-            );
-          })()}
-        </div>
-      )}
 
       {/* Modal */}
       {isConfirmOpen && (
@@ -1328,7 +1298,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             </p>
             
             <div className="space-y-3">
-              {['Fora do target', 'Desistência do projeto', 'Seguiu com concorrente'].map(reason => (
+              {['Fora do target', 'Desistência do projeto', 'Seguiu com concorrente', 'Retrabalho/reprecificação'].map(reason => (
                 <label key={reason} className="flex items-center space-x-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
                   <input
                     type="radio"

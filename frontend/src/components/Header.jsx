@@ -32,7 +32,8 @@ const Header = ({
   subtitle, 
   showBack = false, 
   backPath = '/select',
-  className = ''
+  className = '',
+  logoRedirect = null
 }) => {
   const navigate = useNavigate();
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -120,15 +121,20 @@ const Header = ({
         
         <div className="flex items-center gap-4">
            {/* Logo - Added as requested */}
-           <img 
-            src="/logo-pronutrition-symbol.png" 
-            alt="PRONUTRITION" 
-            className="h-10 w-auto"
-            onError={(e) => {
-              e.target.style.display = 'none';
-              // Fallback if image fails
-            }}
-          />
+           <div 
+             className={`flex items-center ${logoRedirect ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+             onClick={() => logoRedirect && navigate(logoRedirect)}
+           >
+             <img 
+              src="/logo-pronutrition-symbol.png" 
+              alt="PRONUTRITION" 
+              className="h-10 w-auto"
+              onError={(e) => {
+                e.target.style.display = 'none';
+                // Fallback if image fails
+              }}
+            />
+           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{title}</h1>
             {subtitle && <p className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
