@@ -159,11 +159,8 @@ const ClientAliasManager = ({ user, refreshAliases }) => {
   const groupedAliases = groupAliasesByClient();
 
   return (
-    <div className="bg-white dark:bg-[#171717] rounded-lg shadow-sm p-6 transition-colors duration-200">
-      <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">
-        Gerenciar Depara de Clientes
-      </h2>
-
+    <div className="">
+      
       {/* Formulário para adicionar novo alias */}
       <form onSubmit={handleAddAlias} className="mb-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800">
         <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
