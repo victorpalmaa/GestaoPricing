@@ -35,6 +35,7 @@ const PricingDashboard = ({ user }) => {
   const navigate = useNavigate();
   const [pricingData, setPricingData] = useState([]);
   const [clients, setClients] = useState([]);
+  const [clientAliases, setClientAliases] = useState({});
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     client: '',
@@ -63,7 +64,8 @@ const PricingDashboard = ({ user }) => {
     subcategory: '',
     month: '',
     date: new Date().toISOString().split('T')[0],
-    obs: ''
+    obs: '',
+    currency: 'BRL'
   });
   const [showAliasManager, setShowAliasManager] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -83,8 +85,12 @@ const PricingDashboard = ({ user }) => {
 
   // Opções para os selects
   const clientOptions = useMemo(() => {
-    return safeClients.map(c => ({ label: c.name, value: c.id }));
-  }, [safeClients]);
+    return safeClients.map(c => ({ 
+      label: c.name, 
+      value: c.id,
+      keywords: clientAliases[c.id] || ''
+    }));
+  }, [safeClients, clientAliases]);
 
   const categoryOptions = useMemo(() => {
     const categories = [...new Set(safePricingData.map(item => item.category).filter(Boolean))].sort();
@@ -145,6 +151,29 @@ const PricingDashboard = ({ user }) => {
 
       if (clientsError) throw clientsError;
       setClients(clientsData || []);
+
+      // Carregar aliases para busca
+      const { data: aliasesData } = await supabase
+        .from('client_aliases')
+        .select('client_id, alias_name');
+
+      const aliasMap = {};
+      if (aliasesData) {
+        aliasesData.forEach(a => {
+          if (!aliasMap[a.client_id]) {
+            aliasMap[a.client_id] = [];
+          }
+          aliasMap[a.client_id].push(a.alias_name);
+        });
+      }
+      
+      // Converter para string para busca
+      const aliasStringMap = {};
+      Object.keys(aliasMap).forEach(key => {
+        aliasStringMap[key] = aliasMap[key].join(' ');
+      });
+      
+      setClientAliases(aliasStringMap);
 
       // Carregar histórico de preços com joins e filtro de data
       let query = supabase
@@ -637,7 +666,7 @@ const PricingDashboard = ({ user }) => {
         month: newPriceForm.month?.trim() || null,
         date: newPriceForm.date,
         obs: newPriceForm.obs?.trim() || null,
-        currency: 'BRL'
+        currency: newPriceForm.currency || 'BRL'
       };
 
       let error;
@@ -701,7 +730,8 @@ const PricingDashboard = ({ user }) => {
       subcategory: item.subcategory || '',
       month: item.month || '',
       date: item.date.split('T')[0],
-      obs: item.obs || ''
+      obs: item.obs || '',
+      currency: item.currency || 'BRL'
     });
     setShowNewPriceModal(true);
   };
@@ -815,7 +845,8 @@ const PricingDashboard = ({ user }) => {
                       subcategory: '',
                       month: '',
                       date: new Date().toISOString().split('T')[0],
-                      obs: ''
+                      obs: '',
+                      currency: 'BRL'
                     });
                     setShowNewPriceModal(true);
                   }}
@@ -845,7 +876,7 @@ const PricingDashboard = ({ user }) => {
             )}
           </div>
           
-          {/* Botões à direita: Exportar e Gerenciar Aliases */}
+          {/* Botões à direita: Exportar e Gerenciar Depara */}
           <div className="flex items-center gap-2">
             {canEdit && (
               <>
@@ -861,7 +892,7 @@ const PricingDashboard = ({ user }) => {
                   className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
                 >
                   <Settings size={18} />
-                  Gerenciar Aliases
+                  Gerenciar Depara
                 </button>
               </>
             )}
@@ -890,7 +921,7 @@ const PricingDashboard = ({ user }) => {
                 <div>
                   <p className="text-sm text-gray-600 dark:text-gray-400">Total SKUs</p>
                   <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                    {new Set(filteredData.map(item => item.sku)).size}
+                    {new Set(filteredData.map(item => item.code).filter(Boolean)).size}
                   </p>
                 </div>
                 <Package className="text-green-500" size={32} />
@@ -1221,8 +1252,8 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Novo Preço */}
         {showNewPriceModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-[#171717] rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-auto shadow-xl border dark:border-gray-800">
-              <div className="flex items-center justify-between mb-4 sticky top-0 bg-white dark:bg-[#171717] z-50 pb-2 border-b dark:border-gray-800">
+            <div className="bg-white dark:bg-[#171717] rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col mx-auto shadow-xl border dark:border-gray-800">
+              <div className="flex items-center justify-between p-6 border-b dark:border-gray-800 shrink-0 bg-white dark:bg-[#171717] rounded-t-lg">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                   {editingId ? 'Editar Preço' : 'Novo Preço'}
                 </h2>
@@ -1236,184 +1267,200 @@ const PricingDashboard = ({ user }) => {
                   <X size={20} />
                 </button>
               </div>
-              <form onSubmit={handleNewPriceSubmit} id="newPriceForm" className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Cliente *
-                    </label>
-                    <select
-                      value={newPriceForm.client_id}
-                      onChange={(e) => handleNewPriceChange('client_id', e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                    >
-                      <option value="">Selecione um cliente</option>
-                      {clients.map(client => (
-                        <option key={client.id} value={client.id}>{client.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      SKU *
-                    </label>
-                    <input
-                      type="text"
-                      value={newPriceForm.sku}
-                      onChange={(e) => handleNewPriceChange('sku', e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="Digite o SKU"
-                    />
-                  </div>
-                  
-                  {/* Novos Campos */}
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Código
-                    </label>
-                    <input
-                      type="text"
-                      value={newPriceForm.code}
-                      onChange={(e) => handleNewPriceChange('code', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="Código Datasul"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Gestora
-                    </label>
-                    <input
-                      type="text"
-                      value={newPriceForm.manager}
-                      onChange={(e) => handleNewPriceChange('manager', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="Gestora"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Tamanho
-                    </label>
-                    <input
-                      type="text"
-                      value={newPriceForm.size}
-                      onChange={(e) => handleNewPriceChange('size', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="Ex: 1, 2, 3"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Categoria
-                    </label>
-                    <select
-                      value={newPriceForm.category}
-                      onChange={(e) => handleNewPriceChange('category', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                    >
-                      <option value="">Selecione uma categoria</option>
-                      {CATEGORY_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Subcategoria
-                    </label>
-                    <select
-                      value={newPriceForm.subcategory}
-                      onChange={(e) => handleNewPriceChange('subcategory', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                    >
-                      <option value="">Selecione uma subcategoria</option>
-                      {SUBCATEGORY_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Mês
-                    </label>
-                    <input
-                      type="date"
-                      value={newPriceForm.month}
-                      onChange={(e) => handleNewPriceChange('month', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                    />
-                  </div>
+              
+              <div className="p-6 overflow-y-auto">
+                <form onSubmit={handleNewPriceSubmit} id="newPriceForm" className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Cliente *
+                      </label>
+                      <select
+                        value={newPriceForm.client_id}
+                        onChange={(e) => handleNewPriceChange('client_id', e.target.value)}
+                        required
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      >
+                        <option value="">Selecione um cliente</option>
+                        {clients.map(client => (
+                          <option key={client.id} value={client.id}>{client.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        SKU *
+                      </label>
+                      <input
+                        type="text"
+                        value={newPriceForm.sku}
+                        onChange={(e) => handleNewPriceChange('sku', e.target.value)}
+                        required
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="Digite o SKU"
+                      />
+                    </div>
+                    
+                    {/* Novos Campos */}
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Código
+                      </label>
+                      <input
+                        type="text"
+                        value={newPriceForm.code}
+                        onChange={(e) => handleNewPriceChange('code', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="Código Datasul"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Gestora
+                      </label>
+                      <input
+                        type="text"
+                        value={newPriceForm.manager}
+                        onChange={(e) => handleNewPriceChange('manager', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="Gestora"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Tamanho
+                      </label>
+                      <input
+                        type="text"
+                        value={newPriceForm.size}
+                        onChange={(e) => handleNewPriceChange('size', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="Ex: 1, 2, 3"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Categoria
+                      </label>
+                      <select
+                        value={newPriceForm.category}
+                        onChange={(e) => handleNewPriceChange('category', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      >
+                        <option value="">Selecione uma categoria</option>
+                        {CATEGORY_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Subcategoria
+                      </label>
+                      <select
+                        value={newPriceForm.subcategory}
+                        onChange={(e) => handleNewPriceChange('subcategory', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      >
+                        <option value="">Selecione uma subcategoria</option>
+                        {SUBCATEGORY_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Mês
+                      </label>
+                      <input
+                        type="date"
+                        value={newPriceForm.month}
+                        onChange={(e) => handleNewPriceChange('month', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
 
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Preço Líquido *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newPriceForm.net_price}
-                      onChange={(e) => handleNewPriceChange('net_price', e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="0.00"
-                    />
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Preço Líquido *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newPriceForm.net_price}
+                        onChange={(e) => handleNewPriceChange('net_price', e.target.value)}
+                        required
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Preço Bruto
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newPriceForm.gross_price}
+                        onChange={(e) => handleNewPriceChange('gross_price', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Margem Orçada (%)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={newPriceForm.margin_budget}
+                        onChange={(e) => handleNewPriceChange('margin_budget', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        placeholder="0.0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Moeda
+                      </label>
+                      <select
+                        value={newPriceForm.currency}
+                        onChange={(e) => handleNewPriceChange('currency', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      >
+                        <option value="BRL">Real (R$)</option>
+                        <option value="USD">Dólar ($)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Data *
+                      </label>
+                      <input
+                        type="date"
+                        value={newPriceForm.date}
+                        onChange={(e) => handleNewPriceChange('date', e.target.value)}
+                        required
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                        Observações
+                      </label>
+                      <textarea
+                        value={newPriceForm.obs}
+                        onChange={(e) => handleNewPriceChange('obs', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                        rows="3"
+                        placeholder="Observações opcionais"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Preço Bruto
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newPriceForm.gross_price}
-                      onChange={(e) => handleNewPriceChange('gross_price', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Margem Orçada (%)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={newPriceForm.margin_budget}
-                      onChange={(e) => handleNewPriceChange('margin_budget', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      placeholder="0.0"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Data *
-                    </label>
-                    <input
-                      type="date"
-                      value={newPriceForm.date}
-                      onChange={(e) => handleNewPriceChange('date', e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                      Observações
-                    </label>
-                    <textarea
-                      value={newPriceForm.obs}
-                      onChange={(e) => handleNewPriceChange('obs', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                      rows="3"
-                      placeholder="Observações opcionais"
-                    />
-                  </div>
-                </div>
-              </form>
-              <div className="flex justify-end gap-3 mt-6">
+                </form>
+              </div>
+              <div className="p-6 border-t dark:border-gray-800 bg-gray-50 dark:bg-[#1a1a1a] rounded-b-lg flex justify-end gap-3 shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -1432,7 +1479,8 @@ const PricingDashboard = ({ user }) => {
                       subcategory: '',
                       month: '',
                       date: new Date().toISOString().split('T')[0],
-                      obs: ''
+                      obs: '',
+                      currency: 'BRL'
                     });
                   }}
                   className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600"
@@ -1556,7 +1604,7 @@ const PricingDashboard = ({ user }) => {
             <div className="bg-white dark:bg-[#171717] dark:border dark:border-gray-800 rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto transition-colors duration-200">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Gerenciar Aliases de Clientes
+                  Gerenciar Depara de Clientes
                 </h2>
                 <button
                   onClick={() => setShowAliasManager(false)}
@@ -1565,7 +1613,7 @@ const PricingDashboard = ({ user }) => {
                   ✕
                 </button>
               </div>
-              <ClientAliasManager user={user} />
+              <ClientAliasManager user={user} refreshAliases={loadData} />
             </div>
           </div>
         )}

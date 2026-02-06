@@ -3,7 +3,7 @@ import { supabase } from '@/lib/utils';
 import { Plus, Trash2, Edit3 } from 'lucide-react';
 import { addNotification } from '@/utils/notifications';
 
-const ClientAliasManager = ({ user }) => {
+const ClientAliasManager = ({ user, refreshAliases }) => {
   const [clients, setClients] = useState([]);
   const [aliases, setAliases] = useState([]);
   const [selectedClient, setSelectedClient] = useState('');
@@ -61,18 +61,19 @@ const ClientAliasManager = ({ user }) => {
 
       if (error) throw error;
 
-      addNotification('alias', `Novo alias adicionado: ${newAlias.trim()}`, user?.id);
+      addNotification('alias', `Novo depara adicionado: ${newAlias.trim()}`, user?.id);
       setNewAlias('');
       loadData(); // Recarregar dados
+      if (refreshAliases) refreshAliases();
 
     } catch (error) {
       console.error('Erro ao adicionar alias:', error);
-      alert('Erro ao adicionar alias: ' + error.message);
+      alert('Erro ao adicionar depara: ' + error.message);
     }
   };
 
   const handleDeleteAlias = async (aliasId) => {
-    if (!confirm('Tem certeza que deseja excluir este alias?')) return;
+    if (!confirm('Tem certeza que deseja excluir este depara?')) return;
 
     try {
       const { error } = await supabase
@@ -82,12 +83,13 @@ const ClientAliasManager = ({ user }) => {
 
       if (error) throw error;
 
-      addNotification('alias', 'Alias excluído', user?.id);
+      addNotification('alias', 'Depara excluído', user?.id);
       loadData(); // Recarregar dados
+      if (refreshAliases) refreshAliases();
 
     } catch (error) {
       console.error('Erro ao excluir alias:', error);
-      alert('Erro ao excluir alias: ' + error.message);
+      alert('Erro ao excluir depara: ' + error.message);
     }
   };
 
@@ -107,14 +109,15 @@ const ClientAliasManager = ({ user }) => {
 
       if (error) throw error;
 
-      addNotification('alias', `Alias atualizado: ${editAliasValue.trim()}`, user?.id);
+      addNotification('alias', `Depara atualizado: ${editAliasValue.trim()}`, user?.id);
       setEditingAlias(null);
       setEditAliasValue('');
       loadData(); // Recarregar dados
+      if (refreshAliases) refreshAliases();
 
     } catch (error) {
       console.error('Erro ao editar alias:', error);
-      alert('Erro ao editar alias: ' + error.message);
+      alert('Erro ao editar depara: ' + error.message);
     }
   };
 
@@ -158,13 +161,13 @@ const ClientAliasManager = ({ user }) => {
   return (
     <div className="bg-white dark:bg-[#171717] rounded-lg shadow-sm p-6 transition-colors duration-200">
       <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">
-        Gerenciar Aliases de Clientes
+        Gerenciar Depara de Clientes
       </h2>
 
       {/* Formulário para adicionar novo alias */}
       <form onSubmit={handleAddAlias} className="mb-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800">
         <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
-          Adicionar Novo Alias
+          Adicionar Novo Depara
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -185,13 +188,13 @@ const ClientAliasManager = ({ user }) => {
           </div>
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              Alias *
+              Depara *
             </label>
             <input
               type="text"
               value={newAlias}
               onChange={(e) => setNewAlias(e.target.value)}
-              placeholder="Digite o nome alternativo do cliente"
+              placeholder="Digite o depara do cliente"
               required
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
             />
@@ -218,7 +221,7 @@ const ClientAliasManager = ({ user }) => {
               {data.clientName}
             </h4>
             {data.aliases.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum alias cadastrado</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum depara cadastrado</p>
             ) : (
               <div className="space-y-2">
                 {data.aliases.map(alias => (
@@ -280,9 +283,9 @@ const ClientAliasManager = ({ user }) => {
 
       {Object.keys(groupedAliases).length === 0 && (
         <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400">Nenhum alias cadastrado ainda.</p>
+          <p className="text-gray-500 dark:text-gray-400">Nenhum depara cadastrado ainda.</p>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-            Use o formulário acima para adicionar aliases de clientes.
+            Use o formulário acima para adicionar depara de clientes.
           </p>
         </div>
       )}

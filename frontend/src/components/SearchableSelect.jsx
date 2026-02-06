@@ -43,7 +43,7 @@ const SearchableSelect = ({ options, value, onChange, placeholder, searchPlaceho
               {options.map((option) => (
                 <CommandItem
                   key={option.value}
-                  value={option.label}
+                  value={`${option.label} ${option.keywords || ''}`}
                   onSelect={() => {
                     onChange(option.value === value ? "" : option.value);
                     setOpen(false);
