@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Briefcase, ClipboardList, Users } from 'lucide-react';
+import { Briefcase, ClipboardList, Users, Calculator } from 'lucide-react';
 import Header from './Header';
 
 const SessionSelect = ({ user }) => {
@@ -9,10 +9,12 @@ const SessionSelect = ({ user }) => {
     { key: 'pricing-dashboard', title: 'Pricing', icon: Briefcase, to: '/pricing/dashboard' },
     { key: 'pre-vendas', title: 'Pré-sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
     { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
+    { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
   ];
   
   const subtitleFor = (key) => {
     const area = user?.area || user?.user_metadata?.area;
+    if (key === 'simulacao') return 'Cálculo e Análise';
     if (area === 'Pricing') return 'Acessar e gerenciar';
     if (area === 'Pré-vendas') return key === 'pre-vendas' ? 'Acessar e gerenciar' : 'Acessar';
     if (area === 'CS') return key === 'cs' ? 'Acessar e gerenciar' : 'Acessar';

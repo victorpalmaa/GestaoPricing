@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SearchableSelect from './SearchableSelect';
 import Header from './Header';
-import { differenceInDays } from 'date-fns';
+import { differenceInDays, format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { addNotification } from '@/utils/notifications';
 
 import { 
@@ -24,7 +25,8 @@ import {
   Clock,
   Activity,
   Check,
-  XCircle
+  XCircle,
+  Upload
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
@@ -39,6 +41,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [skuFilter, setSkuFilter] = useState('');
   const [precoBrutoFilter, setPrecoBrutoFilter] = useState('');
   const [margemBrutaFilter, setMargemBrutaFilter] = useState('');
+  const [originFilter, setOriginFilter] = useState('');
 
   const clientOptions = useMemo(() => {
     const uniqueClients = [...new Set(leads.map(lead => lead.cliente))].filter(Boolean).sort();
@@ -83,6 +86,36 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [showMoreMetrics, setShowMoreMetrics] = useState(false);
   const [initialLoading, setInitialLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [basePriceId, setBasePriceId] = useState('');
+
+  // Prepare options for base price selection
+  const basePriceOptions = useMemo(() => {
+    return leads.map(l => ({
+      value: l.id,
+      label: `${l.sku} - ${l.cliente} - R$ ${l.precoBruto.toFixed(2)}`
+    }));
+  }, [leads]);
+
+  const handleBasePriceChange = (value) => {
+    setBasePriceId(value);
+    const selectedPrice = leads.find(l => l.id === value);
+    if (selectedPrice) {
+      setFormData(prev => ({
+        ...prev,
+        cliente: selectedPrice.cliente,
+        sku: selectedPrice.sku,
+        category: selectedPrice.category,
+        subcategory: selectedPrice.subcategory,
+        pricingId: selectedPrice.pricingId,
+        precoLiquido: selectedPrice.precoLiquido,
+        precoBruto: selectedPrice.precoBruto,
+        margemBruta: selectedPrice.margemBruta,
+        volume: selectedPrice.volume,
+        status: 'em_aberto', // Reset status for new entry
+        originType: selectedPrice.originType
+      }));
+    }
+  };
 
   // Constants
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
@@ -98,7 +131,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     precoBruto: '',
     margemBruta: '',
     volume: '',
-    status: 'em_aberto'
+    status: 'em_aberto',
+    originType: ''
   });
 
   const parseDateInput = (val) => {
@@ -121,7 +155,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       setInitialLoading(true);
       const { data, error } = await supabase
         .from('prices')
-        .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat')
+        .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag')
         .order('createdat', { ascending: false });
       if (error) {
         setLeads([]);
@@ -141,6 +175,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           volume: r.volume,
           status: r.status,
           createdAt: r.createdat,
+          originType: r.origin_type || '',
+          originTag: r.origin_tag || ''
         }));
         setLeads(mapped);
         setFilteredLeads(mapped);
@@ -172,6 +208,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       data = data.filter(l => (l.status || 'em_aberto') === filterStatus);
     }
 
+    if (originFilter) {
+      data = data.filter(l => (l.originType || '') === originFilter);
+    }
+
     if (filterStartDate) {
       const start = parseDateInput(filterStartDate);
       if (start) {
@@ -201,7 +241,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     }
 
     setFilteredLeads(data);
-  }, [leads, clientFilter, skuFilter, precoBrutoFilter, margemBrutaFilter, filterStatus, filterStartDate, filterEndDate, sortField, sortDir]);
+  }, [leads, clientFilter, skuFilter, precoBrutoFilter, margemBrutaFilter, filterStatus, originFilter, filterStartDate, filterEndDate, sortField, sortDir]);
 
   const handleLogout = () => {
     try {
@@ -217,18 +257,21 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   };
 
   const openModal = (lead = null) => {
+    setBasePriceId(''); // Reset base price selection
     if (lead) {
       setEditingLead(lead);
       setFormData({
         cliente: lead.cliente,
         sku: lead.sku,
         category: lead.category || '',
+        subcategory: lead.subcategory || '',
         pricingId: lead.pricingId || '',
         precoLiquido: lead.precoLiquido,
         precoBruto: lead.precoBruto,
         margemBruta: lead.margemBruta,
         volume: lead.volume,
-        status: lead.status || 'em_aberto'
+        status: lead.status || 'em_aberto',
+        originType: lead.originType || ''
       });
     } else {
       setEditingLead(null);
@@ -236,12 +279,14 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         cliente: '',
         sku: '',
         category: '',
+        subcategory: '',
         pricingId: '',
         precoLiquido: '',
         precoBruto: '',
         margemBruta: '',
         volume: '',
-        status: 'em_aberto'
+        status: 'em_aberto',
+        originType: ''
       });
     }
     setIsModalOpen(true);
@@ -250,6 +295,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingLead(null);
+    setBasePriceId('');
   };
 
   const handleSubmit = (e) => {
@@ -264,7 +310,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       volume: parseInt(formData.volume),
       status: formData.status,
       category: formData.category,
-      subcategory: formData.subcategory
+      subcategory: formData.subcategory,
+      originType: formData.originType || ''
     };
 
     if (editingLead) {
@@ -281,10 +328,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             precobruto: leadData.precoBruto,
             margembruta: leadData.margemBruta,
             volume: leadData.volume,
-            status: leadData.status
+            status: leadData.status,
+            origin_type: leadData.originType || null
           })
           .eq('id', editingLead.id)
-          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag');
         if (error) {
           toast.error('Falha ao atualizar');
         } else {
@@ -302,6 +350,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             volume: r.volume,
             status: r.status,
             createdAt: r.createdat,
+            originType: r.origin_type || '',
+            originTag: r.origin_tag || ''
           };
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
           addNotification('update', `Lead atualizado: ${updated.cliente} - ${updated.sku}`, user?.id);
@@ -323,10 +373,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               precobruto: leadData.precoBruto,
               margembruta: leadData.margemBruta,
               volume: leadData.volume,
-              status: leadData.status
+              status: leadData.status,
+              origin_type: leadData.originType || null
             }
           ])
-          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat');
+          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag');
         if (error) {
           toast.error('Falha ao adicionar');
         } else {
@@ -344,6 +395,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             volume: r.volume,
             status: r.status,
             createdAt: r.createdat,
+            originType: r.origin_type || '',
+            originTag: r.origin_tag || ''
           };
           setLeads([newLead, ...leads]);
           addNotification('create', `Novo lead adicionado: ${newLead.cliente} - ${newLead.sku}`, user?.id);
@@ -509,14 +562,53 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
       {/* Main Content */}
       <main className="max-w-[110rem] mx-auto px-6 py-4">
-        <div className="flex items-center justify-end mb-1">
-          <button
-            onClick={() => setShowMoreMetrics(!showMoreMetrics)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-          >
-            <Activity size={18} />
-            {showMoreMetrics ? 'Menos métricas' : 'Mais métricas'}
-          </button>
+        <div className="flex flex-col gap-3 mb-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOriginFilter('novo_cliente')}
+                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                style={{ backgroundColor: 'var(--color-success)' }}
+                title="Filtrar: Novos clientes"
+              >
+                <CheckCircle size={18} />
+                <span className="leading-tight text-center">Novos<br/>clientes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setOriginFilter('novo_sku')}
+                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                style={{ backgroundColor: 'var(--color-info)' }}
+                title="Filtrar: Novos SKUs dentro da base"
+              >
+                <Package size={18} />
+                <div className="flex flex-col items-center leading-tight">
+                  <span>Novos SKUs</span>
+                  <span>na base</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setOriginFilter('')}
+                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                style={{ backgroundColor: 'var(--color-primary)' }}
+                title="Mostrar todos"
+              >
+                <BarChart3 size={18} />
+                Todos
+              </button>
+            </div>
+            <div className="flex items-center justify-end">
+              <button
+                onClick={() => setShowMoreMetrics(!showMoreMetrics)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              >
+                <Activity size={18} />
+                {showMoreMetrics ? 'Menos métricas' : 'Mais métricas'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -527,7 +619,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   Total de Clientes Únicos
                 </p>
                 <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                  {new Set(leads.map(l => l.cliente)).size}
+                  {new Set(filteredLeads.map(l => l.cliente)).size}
                 </p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10 text-primary">
@@ -543,7 +635,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   ROB Estimado
                 </p>
                 <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                  R$ {(leads.reduce((acc, lead) => acc + (lead.precoBruto * lead.volume), 0) / 1000).toFixed(1)}k
+                  R$ {(filteredLeads.reduce((acc, lead) => acc + (lead.precoBruto * lead.volume), 0) / 1000).toFixed(1)}k
                 </p>
               </div>
               <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
@@ -560,8 +652,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 </p>
                 <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   {(() => {
-                    const aprovados = leads.filter(l => l.status === 'aprovado').length;
-                    const reprovados = leads.filter(l => l.status === 'reprovado').length;
+                    const aprovados = filteredLeads.filter(l => l.status === 'aprovado').length;
+                    const reprovados = filteredLeads.filter(l => l.status === 'reprovado').length;
                     const base = aprovados + reprovados;
                     return base > 0 ? Math.round((aprovados / base) * 100) : 0;
                   })()}%
@@ -584,7 +676,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   </p>
                   <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     R$ {( 
-                      leads
+                      filteredLeads
                         .filter(l => l.status === 'aprovado')
                         .reduce((acc, l) => acc + (l.precoBruto * l.volume * (l.margemBruta / 100)), 0) / 1000
                     ).toFixed(1)}k
@@ -603,8 +695,8 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     MB Média
                   </p>
                   <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                    {leads.length > 0 
-                      ? (leads.reduce((acc, lead) => acc + lead.margemBruta, 0) / leads.length).toFixed(1)
+                    {filteredLeads.length > 0 
+                      ? (filteredLeads.reduce((acc, lead) => acc + lead.margemBruta, 0) / filteredLeads.length).toFixed(1)
                       : '0'}%
                   </p>
                 </div>
@@ -621,7 +713,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     ROL Estimado
                   </p>
                   <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                    R$ {(leads.reduce((acc, lead) => acc + (lead.precoLiquido * lead.volume), 0) / 1000).toFixed(1)}k
+                    R$ {(filteredLeads.reduce((acc, lead) => acc + (lead.precoLiquido * lead.volume), 0) / 1000).toFixed(1)}k
                   </p>
                 </div>
                 <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
@@ -637,7 +729,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     Volume Total
                   </p>
                   <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
-                    {leads.reduce((acc, lead) => acc + lead.volume, 0).toLocaleString('pt-BR')}
+                    {filteredLeads.reduce((acc, lead) => acc + lead.volume, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
                 <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
@@ -902,7 +994,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                         })()}
                       </td>
                       <td className="px-6 py-4 text-left text-gray-500 dark:text-gray-400">
-                        {new Date(lead.createdAt).toLocaleDateString('pt-BR')}
+                        {format(new Date(lead.createdAt), 'MMM/yy', { locale: ptBR })}
                       </td>
                       <td className="px-6 py-4 text-left">
                         {(() => {
@@ -1073,11 +1165,11 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
              onClick={closeModal}>
-          <div className="card-pronutrition max-w-2xl w-full fade-in dark:bg-[#171717] dark:border dark:border-gray-800"
-               style={{ padding: '1.5rem' }}
+          <div className="card-pronutrition max-w-2xl w-full fade-in dark:bg-[#171717] dark:border dark:border-gray-800 max-h-[85vh] flex flex-col overflow-hidden"
+               style={{ padding: 0 }}
                onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between p-6 border-b dark:border-gray-800 shrink-0 bg-white dark:bg-[#171717]">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {editingLead ? 'Editar Preço' : 'Novo Preço'}
               </h2>
@@ -1090,12 +1182,29 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             </div>
 
             {/* Modal Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Cliente */}
-              <div>
-                <label htmlFor="cliente" className="label-pronutrition dark:text-gray-300">
-                  Nome do Cliente
-                </label>
+            <div className="p-6 overflow-y-auto flex-1">
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {!editingLead && (
+                  <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                      <Upload size={16} className="text-gray-500" />
+                      Usar preço existente como base
+                    </label>
+                    <SearchableSelect
+                      options={basePriceOptions}
+                      value={basePriceId}
+                      onChange={handleBasePriceChange}
+                      placeholder="Selecione um preço para copiar..."
+                      searchPlaceholder="Buscar por SKU, cliente..."
+                    />
+                  </div>
+                )}
+
+                {/* Cliente */}
+                <div>
+                  <label htmlFor="cliente" className="label-pronutrition dark:text-gray-300">
+                    Nome do Cliente
+                  </label>
                 <input
                   id="cliente"
                   name="cliente"
@@ -1125,6 +1234,38 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   value={formData.sku}
                   onChange={handleChange}
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label-pronutrition dark:text-gray-300">
+                    Origem do Projeto
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_cliente' }))}
+                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        formData.originType === 'novo_cliente'
+                          ? 'bg-blue-500 text-white border-blue-500'
+                          : 'bg-white dark:bg-[#0a0a0a] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                      }`}
+                    >
+                      Novos clientes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_sku' }))}
+                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        formData.originType === 'novo_sku'
+                          ? 'bg-purple-600 text-white border-purple-600'
+                          : 'bg-white dark:bg-[#0a0a0a] text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20'
+                      }`}
+                    >
+                      Novos SKUs
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Categoria */}
@@ -1279,6 +1420,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                 </button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

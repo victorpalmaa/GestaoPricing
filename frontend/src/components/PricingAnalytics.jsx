@@ -19,6 +19,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import SearchableSelect from './SearchableSelect';
+import MysteryShopper from './MysteryShopper';
 
 import Header from './Header';
 
@@ -55,6 +56,28 @@ const PricingAnalytics = ({ user, setUser }) => {
     if (clientParam) setSelectedClient(clientParam);
     if (skuParam) setSelectedSKU(skuParam);
   }, [searchParams]);
+
+  // Realtime Subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('pricing_analytics_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pricing_history'
+        },
+        (payload) => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -597,6 +620,22 @@ const PricingAnalytics = ({ user, setUser }) => {
             </div>
           </div>
         )}
+
+        {/* Mystery Shopper Section */}
+        <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm mb-8 card-pronutrition hover-lift transition-colors duration-200">
+          <div className="flex items-center gap-4 mb-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-gray-900 dark:text-white">
+              <Search size={20} className="text-purple-600" />
+              Inteligência de Mercado (Mystery Shopper)
+            </h3>
+          </div>
+          <MysteryShopper 
+            user={user}
+            selectedCategory={selectedCategory}
+            selectedSubcategory={selectedSubcategory}
+            pricingData={pricingData}
+          />
+        </div>
 
         {/* Gráficos de Evolução */}
         <div className="grid grid-cols-1 gap-6 mb-8">

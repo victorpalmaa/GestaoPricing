@@ -1,23 +1,36 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/utils';
 import { 
-  LogOut, 
-  ArrowLeft, 
   Info, 
   CalendarDays, 
   AlertTriangle,
-  Search,
   Filter,
-  CheckCircle2,
   Clock,
   TrendingUp,
+  TrendingDown,
   X,
-  Edit,
-  Save
+  HelpCircle,
+  LayoutDashboard,
+  LayoutGrid,
+  Table as TableIcon,
+  Flame,
+  Target,
+  CalendarClock,
+  Pencil,
+  AlertCircle,
+  CheckCircle,
+  Download
 } from 'lucide-react';
 import Header from './Header';
 import HistoryChartModal from './HistoryChartModal';
+import SearchableSelect from './SearchableSelect';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -25,45 +38,109 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { format, addDays, differenceInDays, isSameMonth, addMonths } from 'date-fns';
+import { 
+  format, 
+  addDays, 
+  subDays,
+  differenceInDays, 
+  isSameMonth, 
+  addMonths, 
+  parseISO, 
+  isAfter, 
+  isBefore, 
+  isValid,
+  isThisWeek,
+  isPast,
+  isSameDay,
+  startOfDay
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
-
-// Dados Mock para desenvolvimento inicial
-const MOCK_CS_CONTRACTS = [
-  { id: 1, client_id: 'c1', client_name: 'Cliente A', sku: 'SKU-001', code: '1001', gate: 1, next_validity_date: '2024-02-01', observation: '' },
-  { id: 2, client_id: 'c1', client_name: 'Cliente A', sku: 'SKU-002', code: '1002', gate: 2, next_validity_date: '2024-05-15', observation: 'Revisar margem' },
-  { id: 3, client_id: 'c2', client_name: 'Cliente B', sku: 'SKU-003', code: '2001', gate: 3, next_validity_date: '2024-10-01', observation: '' },
-  { id: 4, client_id: 'c3', client_name: 'Cliente C', sku: 'SKU-004', code: '3001', gate: 1, next_validity_date: '2024-02-20', observation: '' },
-  { id: 5, client_id: 'c2', client_name: 'Cliente B', sku: 'SKU-005', code: '2002', gate: 2, next_validity_date: '2024-05-01', observation: '' },
-];
+import { calculateContractInfo, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
+import { 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  Legend, 
+  ResponsiveContainer, 
+  BarChart as RechartsBarChart, 
+  Bar, 
+  PieChart as RechartsPieChart, 
+  Pie, 
+  Cell,
+  ReferenceLine
+} from 'recharts';
 
 const CS = ({ user }) => {
-  const navigate = useNavigate();
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     client: '',
     sku: '',
-    gate: ''
+    manager: '',
+    category: '',
+    subcategory: '',
+    size: '',
+    datasulCode: '',
+    gate: '',
+    dateFrom: '',
+    dateTo: '',
+    status: '',
+    communicationStatus: ''
   });
   
   // Estado para o modal de histórico
   const [selectedItem, setSelectedItem] = useState(null);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState('dashboard'); // 'dashboard' or 'table'
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
   // Estado para modal de edição
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [observation, setObservation] = useState('');
 
-  // Carregar dados (Mock ou Real)
+  // Realtime Subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('pricing_history_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pricing_history'
+        },
+        (payload) => {
+          // Refresh data on any change
+          loadContracts();
+          
+          // Optional: Show toast for external updates if needed, but might be noisy
+          if (payload.eventType === 'INSERT') {
+            toast.info('Novos dados de precificação recebidos.');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Carregar dados
   useEffect(() => {
     loadContracts();
   }, []);
@@ -71,13 +148,65 @@ const CS = ({ user }) => {
   const loadContracts = async () => {
     try {
       setLoading(true);
-      // TODO: Substituir por chamada real ao Supabase quando a tabela cs_contracts existir
-      // const { data, error } = await supabase.from('cs_contracts').select('*');
-      // if (error) throw error;
       
-      // Simulando delay de rede
-      await new Promise(resolve => setTimeout(resolve, 500));
-      setContracts(MOCK_CS_CONTRACTS);
+      const { data, error } = await supabase
+        .from('pricing_history')
+        .select(`
+          *,
+          clients (name)
+        `)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      // Agrupar por Cliente+SKU para cálculo de reajuste
+      const groups = {};
+      
+      data.forEach(item => {
+        if (!item.date || !item.sku) return;
+        
+        const key = `${item.client_id}-${item.sku}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(item);
+      });
+
+      // Processar cada grupo para encontrar atual, anterior e calcular % reajuste
+      const processedContracts = Object.values(groups).map(group => {
+        // Ordenar por data decrescente (mais recente primeiro)
+        group.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        const current = group[0];
+        const previous = group[1]; // Pode ser undefined se só houver 1 registro
+
+        // Calcular % Reajuste
+        let readjustment_pct = 0;
+        let previous_price = null;
+
+        if (previous && Number(previous.gross_price) > 0) {
+           previous_price = Number(previous.gross_price);
+           const current_price = Number(current.gross_price);
+           readjustment_pct = ((current_price - previous_price) / previous_price) * 100;
+        }
+
+        // Handle Supabase join result which might be object or array
+        let clientName = 'Cliente Desconhecido';
+        if (current.clients) {
+          if (Array.isArray(current.clients)) {
+            clientName = current.clients[0]?.name || clientName;
+          } else if (typeof current.clients === 'object') {
+            clientName = current.clients.name || clientName;
+          }
+        }
+
+        return {
+          ...current,
+          client_name: clientName,
+          readjustment_pct,
+          previous_price
+        };
+      });
+      
+      setContracts(processedContracts);
       
     } catch (error) {
       console.error('Erro ao carregar contratos:', error);
@@ -87,80 +216,475 @@ const CS = ({ user }) => {
     }
   };
 
-  // Lógica dos Gates
-  const calculateGateDates = (gate, validityDateStr) => {
-    if (!validityDateStr) return { communicationDate: null, analysisDate: null };
-    
-    const validityDate = new Date(validityDateStr);
-    // Regra: Aviso prévio ~30 dias antes da vigência
-    const communicationDate = addDays(validityDate, -30);
-    // Análise: ~60 dias antes (estimativa baseada na descrição dos Gates)
-    const analysisDate = addDays(validityDate, -60);
+  const handleFilterChange = (field, value) => {
+    setFilters(prev => {
+      if (field === 'dateFrom' || field === 'dateTo') {
+        return { ...prev, [field]: value };
+      }
 
-    return { communicationDate, analysisDate };
+      const newFilters = { ...prev, [field]: value };
+
+      // Dependent filters clearing logic
+      if (field === 'manager') {
+        newFilters.client = '';
+        newFilters.sku = '';
+        newFilters.datasulCode = '';
+      }
+      if (field === 'client') {
+        newFilters.sku = '';
+        newFilters.datasulCode = '';
+      }
+      if (field === 'category') {
+        newFilters.subcategory = '';
+        newFilters.sku = '';
+        newFilters.datasulCode = '';
+      }
+      if (field === 'subcategory') {
+        newFilters.sku = '';
+        newFilters.datasulCode = '';
+      }
+
+      return newFilters;
+    });
   };
 
-  const getGateInfo = (gate) => {
-    switch(gate) {
-      case 1: return "Nov/Dez/Jan/Fev (Vigência Fev)";
-      case 2: return "Mar/Abr/Mai/Jun (Vigência Mai)";
-      case 3: return "Jul/Ago/Set/Out (Vigência Out)";
-      default: return "N/A";
+  // Generate Filter Options
+  const managerOptions = useMemo(() => {
+    const uniqueManagers = [...new Set(contracts.map(item => item.manager).filter(Boolean))].sort();
+    return uniqueManagers.map(manager => ({ value: manager, label: manager }));
+  }, [contracts]);
+
+  const clientOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.manager) filtered = filtered.filter(item => item.manager === filters.manager);
+    const uniqueClients = [...new Set(filtered.map(item => item.client_name))].sort();
+    return uniqueClients.map(client => ({ value: client, label: client }));
+  }, [contracts, filters.manager]);
+
+  const categoryOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.client) {
+      filtered = filtered.filter(item => item.client_name === filters.client);
     }
-  };
+    const uniqueCategories = [...new Set(filtered.map(item => item.category).filter(Boolean))].sort();
+    return uniqueCategories.map(cat => ({ value: cat, label: cat }));
+  }, [contracts, filters.client]);
+
+  const subcategoryOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
+    if (filters.category) filtered = filtered.filter(item => item.category === filters.category);
+    
+    const uniqueSubcategories = [...new Set(filtered.map(item => item.subcategory).filter(Boolean))].sort();
+    return uniqueSubcategories.map(sub => ({ value: sub, label: sub }));
+  }, [contracts, filters.client, filters.category]);
+
+  const sizeOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
+    if (filters.category) filtered = filtered.filter(item => item.category === filters.category);
+    if (filters.subcategory) filtered = filtered.filter(item => item.subcategory === filters.subcategory);
+
+    const uniqueSizes = [...new Set(filtered.map(item => item.size).filter(Boolean))].sort();
+    return uniqueSizes.map(size => ({ value: size, label: size }));
+  }, [contracts, filters.client, filters.category, filters.subcategory]);
+
+  const skuOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.manager) filtered = filtered.filter(item => item.manager === filters.manager);
+    if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
+    if (filters.category) filtered = filtered.filter(item => item.category === filters.category);
+    if (filters.subcategory) filtered = filtered.filter(item => item.subcategory === filters.subcategory);
+    if (filters.size) filtered = filtered.filter(item => item.size === filters.size);
+
+    const uniqueSkus = [...new Set(filtered.map(item => item.sku).filter(Boolean))].sort();
+    return uniqueSkus.map(sku => ({ value: sku, label: sku }));
+  }, [contracts, filters.manager, filters.client, filters.category, filters.subcategory, filters.size]);
+
+  const datasulCodeOptions = useMemo(() => {
+    let filtered = contracts;
+    if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
+    if (filters.sku) filtered = filtered.filter(item => item.sku === filters.sku);
+
+    const uniqueCodes = [...new Set(filtered.map(item => item.code).filter(Boolean))].sort();
+    return uniqueCodes.map(code => ({ value: code, label: code }));
+  }, [contracts, filters.client, filters.sku]);
+
+  // Lógica dos Gates
+  // calculateContractInfo agora é importada de ../utils/pricingUtils
 
   // Processamento dos dados com cálculos
   const processedData = useMemo(() => {
     return contracts.map(contract => {
-      const { communicationDate } = calculateGateDates(contract.gate, contract.next_validity_date);
-      const daysRemaining = communicationDate ? differenceInDays(communicationDate, new Date()) : null;
+      const info = calculateContractInfo(contract);
       
+      // Financial Impact Calculation (Impacto = Preço Bruto * Volume)
+      // Fallback para 0 se não houver dados
+      const volume = Number(contract.volume) || 0;
+      const price = Number(contract.gross_price) || 0;
+      const financialImpact = volume * price;
+
       return {
         ...contract,
-        communicationDate,
-        daysRemaining,
-        status: daysRemaining !== null && daysRemaining <= 30 ? 'critical' : 'normal'
+        ...info,
+        financialImpact,
+        communication_status: contract.communication_status || 'pending'
       };
     });
   }, [contracts]);
 
-  // Notificações (Stand-by)
-  /*
-  useEffect(() => {
-    const checkNotifications = () => {
-      processedData.forEach(item => {
-        if (item.daysRemaining !== null && item.daysRemaining <= 30 && item.daysRemaining > 0) {
-           // Lógica futura: disparar notificação visual ou email
-           console.log(`Alerta: Contrato de ${item.client_name} (${item.sku}) vence em ${item.daysRemaining} dias!`);
-        }
-      });
-    };
-    
-    if (processedData.length > 0) {
-      checkNotifications();
-    }
-  }, [processedData]);
-  */
-
   // Filtragem
   const filteredData = useMemo(() => {
     return processedData.filter(item => {
-      const matchClient = !filters.client || item.client_name.toLowerCase().includes(filters.client.toLowerCase());
-      const matchSku = !filters.sku || item.sku.toLowerCase().includes(filters.sku.toLowerCase());
+      const matchManager = !filters.manager || item.manager === filters.manager;
+      const matchClient = !filters.client || item.client_name === filters.client;
+      const matchSku = !filters.sku || item.sku === filters.sku;
+      const matchCategory = !filters.category || item.category === filters.category;
+      const matchSubcategory = !filters.subcategory || item.subcategory === filters.subcategory;
+      const matchSize = !filters.size || item.size === filters.size;
+      const matchCode = !filters.datasulCode || item.code === filters.datasulCode;
       const matchGate = !filters.gate || item.gate.toString() === filters.gate;
+      const matchCommunication = !filters.communicationStatus || item.readjustment_status === filters.communicationStatus;
       
-      return matchClient && matchSku && matchGate;
+      let matchStatus = true;
+      if (filters.status === 'critical') {
+        matchStatus = item.status === 'critical';
+      }
+
+      let matchDate = true;
+      if (item.next_validity_date) {
+        const nextValDate = new Date(item.next_validity_date);
+        if (filters.dateFrom) {
+          const fromDate = parseISO(filters.dateFrom);
+          if (isValid(fromDate)) {
+            matchDate = matchDate && (isAfter(nextValDate, fromDate) || nextValDate.getTime() === fromDate.getTime());
+          }
+        }
+        if (filters.dateTo) {
+          const toDate = parseISO(filters.dateTo);
+          if (isValid(toDate)) {
+             // Add 1 day to include the end date or use isBefore/isEqual logic properly
+             // Simply using isBefore(date, addDays(toDate, 1)) covers the whole day
+             matchDate = matchDate && isBefore(nextValDate, addDays(toDate, 1));
+          }
+        }
+      } else if (filters.dateFrom || filters.dateTo) {
+        matchDate = false;
+      }
+
+      return matchManager && matchClient && matchSku && matchGate && matchCategory && matchSubcategory && matchSize && matchCode && matchDate && matchStatus && matchCommunication;
     });
   }, [processedData, filters]);
 
-  // KPIs
-  const kpis = useMemo(() => {
+  const sortedData = useMemo(() => {
+    let sortableItems = [...filteredData];
+    if (sortConfig.key !== null) {
+      sortableItems.sort((a, b) => {
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [filteredData, sortConfig]);
+
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+
+  // Novos Cálculos para Visualizações Avançadas
+  const advancedStats = useMemo(() => {
+    // 1. Burndown Widget
+    const today = startOfDay(new Date());
+    const dueThisWeek = processedData.filter(i => 
+      i.communicationDate && isThisWeek(i.communicationDate) && !isPast(i.communicationDate) && i.communication_status !== 'communicated'
+    ).length;
+    
+    const overdue = processedData.filter(i => 
+      i.communicationDate && isPast(i.communicationDate) && differenceInDays(today, i.communicationDate) > 0 && i.communication_status !== 'communicated'
+    ).length;
+
+    // 2. Timeline Chart (Next 60 days)
+    const timelineMap = {};
+    const startDate = subDays(today, 5); // Show a bit of history
+    const endDate = addDays(today, 60);
+    
+    // Initialize days
+    let currDate = startDate;
+    while (isBefore(currDate, endDate) || isSameDay(currDate, endDate)) {
+      const dateKey = format(currDate, 'yyyy-MM-dd');
+      timelineMap[dateKey] = {
+        date: dateKey,
+        displayDate: format(currDate, 'dd/MM'),
+        count: 0,
+        financialValue: 0,
+        overdue: 0,
+        isPast: isBefore(currDate, today)
+      };
+      currDate = addDays(currDate, 1);
+    }
+
+    // Populate with data
+    filteredData.forEach(item => {
+      if (item.communicationDate) {
+        const dateKey = format(item.communicationDate, 'yyyy-MM-dd');
+        if (timelineMap[dateKey]) {
+          timelineMap[dateKey].count++;
+          timelineMap[dateKey].financialValue += (item.financialImpact || 0);
+          if (isBefore(item.communicationDate, today)) {
+             timelineMap[dateKey].overdue++;
+          }
+        }
+      }
+    });
+
+    const timelineData = Object.values(timelineMap);
+
+    // 3. Workload Heatmap
+    const workloadMap = {};
+    
+    filteredData.forEach(item => {
+      if (!item.manager) return;
+      
+      if (!workloadMap[item.manager]) {
+        workloadMap[item.manager] = {
+          manager: item.manager,
+          gate1: 0,
+          gate2: 0,
+          gate3: 0,
+          gate1Clients: [],
+          gate2Clients: [],
+          gate3Clients: []
+        };
+      }
+      
+      const entry = workloadMap[item.manager];
+      if (item.gate === 1) {
+        entry.gate1++;
+        entry.gate1Clients.push(item.client_name);
+      } else if (item.gate === 2) {
+        entry.gate2++;
+        entry.gate2Clients.push(item.client_name);
+      } else if (item.gate === 3) {
+        entry.gate3++;
+        entry.gate3Clients.push(item.client_name);
+      }
+    });
+
+    // Process top clients for tooltip
+    const workloadData = Object.values(workloadMap).map(w => ({
+      ...w,
+      gate1Tooltip: [...new Set(w.gate1Clients)].slice(0, 3).join(', '),
+      gate2Tooltip: [...new Set(w.gate2Clients)].slice(0, 3).join(', '),
+      gate3Tooltip: [...new Set(w.gate3Clients)].slice(0, 3).join(', ')
+    }));
+
+    return {
+      burndown: { dueThisWeek, overdue },
+      timelineData,
+      workloadData
+    };
+  }, [processedData, filteredData]);
+
+  // KPIs e Dados para Gráficos
+  const { kpis, chartData } = useMemo(() => {
     const totalContracts = filteredData.length;
-    const criticalContracts = filteredData.filter(i => i.daysRemaining !== null && i.daysRemaining <= 30 && i.daysRemaining >= 0).length;
+    
+    // Distribuição por Gate (Moved up for reuse in Card 1)
+    const gate1Count = filteredData.filter(i => i.gate === 1).length;
+    const gate2Count = filteredData.filter(i => i.gate === 2).length;
+    const gate3Count = filteredData.filter(i => i.gate === 3).length;
+
+    const gateData = [
+      { name: 'Gate 1', value: gate1Count, color: '#64D020' }, // Green
+      { name: 'Gate 2', value: gate2Count, color: '#1AC6FC' }, // Blue
+      { name: 'Gate 3', value: gate3Count, color: '#845AFA' }, // Purple
+    ].filter(i => i.value > 0);
+
+    // Critical Contracts Logic
+    // Status 'critical' already handles: daysRemaining <= 30 && !isNewContract && !communicated
+    const criticalContractsItems = filteredData.filter(i => i.status === 'critical');
+    const criticalContracts = criticalContractsItems.length;
+    const criticalFinancialImpact = criticalContractsItems.reduce((acc, curr) => acc + (curr.financialImpact || 0), 0);
+    
+    // Next Gate Logic (Planning)
+    const today = new Date();
+    const currentMonth = today.getMonth(); // 0-11
+    let currentGate = 1;
+    if (currentMonth >= 2 && currentMonth <= 5) currentGate = 2;
+    if (currentMonth >= 6 && currentMonth <= 9) currentGate = 3;
+    
+    // Próximo Gate cíclico: 1->2->3->1
+    const nextGate = (currentGate % 3) + 1; 
+    const nextGateSkus = filteredData.filter(i => i.gate === nextGate).length;
+    
+    // Determinar mês de vigência do próximo gate
+    let nextGateStartMonth = 'Novembro'; // Gate 1 Start
+    if (nextGate === 2) nextGateStartMonth = 'Março';
+    if (nextGate === 3) nextGateStartMonth = 'Julho';
+
     const nextMonthReajust = filteredData.filter(i => i.next_validity_date && isSameMonth(new Date(i.next_validity_date), addMonths(new Date(), 1))).length;
 
-    return { totalContracts, criticalContracts, nextMonthReajust };
+    // Distribuição por Status
+    const statusData = [
+      { name: 'Crítico', value: criticalContracts, color: '#EF4444' }, // Red
+      { name: 'Em dia', value: totalContracts - criticalContracts, color: '#64D020' }, // Green
+    ].filter(i => i.value > 0);
+
+    // Contratos por Mês (Próximos 12 meses)
+    const monthlyData = {};
+    filteredData.forEach(item => {
+      if (item.next_validity_date) {
+        const date = new Date(item.next_validity_date);
+        // Use a sortable key format YYYY-MM for sorting, but display MMM/yy
+        const sortKey = format(date, 'yyyy-MM');
+        const displayKey = format(date, 'MMM/yy', { locale: ptBR });
+        
+        if (!monthlyData[sortKey]) {
+          monthlyData[sortKey] = { name: displayKey, value: 0, sortKey };
+        }
+        monthlyData[sortKey].value++;
+      }
+    });
+
+    // Ordenar cronologicamente
+    const monthlyChartData = Object.values(monthlyData)
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(({ name, value }) => ({ name, value }));
+
+    return { 
+      kpis: { 
+        totalContracts, 
+        criticalContracts, 
+        nextMonthReajust, 
+        criticalFinancialImpact,
+        gate1Count,
+        gate2Count,
+        gate3Count,
+        nextGate,
+        nextGateSkus,
+        nextGateStartMonth
+      },
+      chartData: { gateData, statusData, monthlyChartData }
+    };
   }, [filteredData]);
+
+  const handleStatusChange = useCallback(async (item, newStatus) => {
+    const previousStatus = item.readjustment_status;
+
+    try {
+      // Optimistic update
+      setContracts(currentContracts => 
+        currentContracts.map(c => 
+          c.id === item.id ? { ...c, readjustment_status: newStatus } : c
+        )
+      );
+
+      const { error } = await supabase
+        .from('pricing_history')
+        .update({ readjustment_status: newStatus })
+        .eq('id', item.id);
+
+      if (error) throw error;
+      
+      toast.success(`Status atualizado para: ${newStatus}`);
+    } catch (error) {
+      console.error('Error updating status:', error);
+      toast.error('Erro ao atualizar status. As alterações foram revertidas.');
+      
+      // Revert to previous status
+      setContracts(currentContracts => 
+        currentContracts.map(c => 
+          c.id === item.id ? { ...c, readjustment_status: previousStatus } : c
+        )
+      );
+    }
+  }, []);
+
+
+  const isPricingUser = user?.area === 'Pricing' || user?.user_metadata?.area === 'Pricing';
+
+  const handleUpdateField = async (item, field, value) => {
+    try {
+      let updateQuery = supabase.from('pricing_history').update({ [field]: value });
+      
+      // Se for atualização de gestor, aplica para todos os registros desse cliente
+      if (field === 'manager' && item.client_id) {
+         updateQuery = updateQuery.eq('client_id', item.client_id);
+      } else {
+         updateQuery = updateQuery.eq('id', item.id);
+      }
+
+      const { error } = await updateQuery;
+      if (error) throw error;
+      
+      toast.success(`${field === 'manager' ? 'Gestor' : 'Gate'} atualizado com sucesso!`);
+      
+      // Atualização otimista local
+      setContracts(prev => prev.map(c => {
+        if (field === 'manager' && item.client_id) {
+            // Atualiza todos os registros desse cliente
+            return c.client_id === item.client_id ? { ...c, [field]: value } : c;
+        }
+        return c.id === item.id ? { ...c, [field]: value } : c;
+      }));
+
+    } catch (error) {
+      console.error('Erro ao atualizar:', error);
+      toast.error('Erro ao atualizar dados');
+    }
+  };
+
+  const handleExportCSV = () => {
+    const headers = [
+      'SKU', 'Cliente', 'Gestor', 'Categoria', 'Subcategoria', 
+      'Preço Atual', 'Data Último Preço', 'Gate', 'Data Contrato', 'Prox. Vigência', 
+      'Data Comunicação', 'Status', '% Reajuste'
+    ];
+    
+    const rows = filteredData.map(item => [
+      item.sku,
+      item.client_name,
+      item.manager,
+      item.category,
+      item.subcategory,
+      (item.gross_price || 0).toString().replace('.', ','),
+      item.last_price_date ? format(new Date(item.last_price_date), 'dd/MM/yyyy') : '-',
+      item.gate,
+      format(new Date(item.date), 'dd/MM/yyyy'),
+      item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-',
+      item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-',
+      item.readjustment_status || 'Em Análise',
+      (item.readjustment_pct || 0).toFixed(2).replace('.', ',') + '%'
+    ]);
+
+    const csvContent = [
+      headers.join(';'),
+      ...rows.map(row => row.join(';'))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `cs_action_list_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
 
   const handleRowClick = (item) => {
     setSelectedItem(item);
@@ -174,66 +698,304 @@ const CS = ({ user }) => {
     setIsEditModalOpen(true);
   };
 
-  const handleSaveObservation = () => {
-    // Aqui iria a lógica de update no Supabase
-    // await supabase.from('cs_contracts').update({ observation }).eq('id', editingItem.id);
-    
-    // Atualizando estado localmente para feedback imediato
-    const updatedContracts = contracts.map(c => 
-      c.id === editingItem.id ? { ...c, observation } : c
-    );
-    setContracts(updatedContracts);
-    
-    toast.success('Observação salva com sucesso (Simulação)');
-    setIsEditModalOpen(false);
+  const handleSaveObservation = async () => {
+    if (!editingItem) return;
+
+    try {
+      // Salvando no Supabase
+      const { error } = await supabase
+        .from('pricing_history')
+        .update({ obs: observation })
+        .eq('id', editingItem.id);
+      
+      if (error) throw error;
+
+      // Atualizando estado localmente para feedback imediato
+      const updatedContracts = contracts.map(c => 
+        c.id === editingItem.id ? { ...c, observation } : c
+      );
+      setContracts(updatedContracts);
+      
+      toast.success('Observação salva com sucesso!');
+      setIsEditModalOpen(false);
+    } catch (error) {
+      console.error('Erro ao salvar observação:', error);
+      toast.error('Erro ao salvar observação');
+    }
   };
+
+  // Helper para abrir modal com SKUs do gráfico
+  const handleChartClick = (data, type) => {
+    if (!data) return;
+    
+    let filteredSkus = [];
+    let title = '';
+
+    if (type === 'timeline') {
+      // Filtrar por data
+      const clickedDate = data.date; // formato yyyy-MM-dd
+      if (!clickedDate) return;
+      
+      filteredSkus = filteredData.filter(item => 
+        item.communicationDate && format(item.communicationDate, 'yyyy-MM-dd') === clickedDate
+      );
+      title = `SKUs para comunicar em ${data.displayDate || clickedDate}`;
+    } else if (type === 'gate') {
+      // Filtrar por gate
+      const name = data.name || data.payload?.name;
+      if (!name) return;
+
+      const gateNum = parseInt(name.replace('Gate ', ''));
+      filteredSkus = filteredData.filter(item => item.gate === gateNum);
+      title = `SKUs do Gate ${gateNum}`;
+    }
+
+    // Modal simples
+    setModalClientFilter(''); // Resetar filtro de cliente ao abrir
+    setModalData({ isOpen: true, title, items: filteredSkus });
+  };
+
+  const handleWorkloadClick = (manager, gate) => {
+    const filteredSkus = filteredData.filter(item => item.manager === manager && item.gate === gate);
+    const title = `SKUs de ${manager} - Gate ${gate}`;
+    setModalClientFilter('');
+    setModalData({ isOpen: true, title, items: filteredSkus });
+  };
+
+  // Estado para o modal de detalhes
+  const [modalData, setModalData] = useState({ isOpen: false, title: '', items: [] });
+  const [modalClientFilter, setModalClientFilter] = useState('');
+
+  // Filter items in modal based on selected client
+  const modalFilteredItems = useMemo(() => {
+    if (!modalClientFilter) return modalData.items;
+    return modalData.items.filter(item => item.client_name === modalClientFilter);
+  }, [modalData.items, modalClientFilter]);
+
+  // Get unique clients for modal dropdown
+  const modalClientOptions = useMemo(() => {
+    const clients = [...new Set(modalData.items.map(item => item.client_name))].sort();
+    return clients;
+  }, [modalData.items]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
+      
+      {/* Modal de Detalhes do Gráfico */}
+      {modalData.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-gray-200 dark:border-gray-800">
+            <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <LayoutGrid className="w-5 h-5 text-blue-500" />
+                  {modalData.title}
+                </h3>
+                <button 
+                  onClick={() => setModalData({ ...modalData, isOpen: false })}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              {/* Filtro de Cliente no Modal */}
+              <div className="w-full md:w-1/2">
+                <select
+                  value={modalClientFilter}
+                  onChange={(e) => setModalClientFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all cursor-pointer"
+                >
+                  <option value="">Todos os Clientes ({modalData.items.length} SKUs)</option>
+                  {modalClientOptions.map(client => (
+                    <option key={client} value={client}>
+                      {client}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-6">
+              {modalFilteredItems.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {modalFilteredItems.map((item, idx) => (
+                    <div 
+                      key={idx} 
+                      className={`p-4 rounded-lg border hover:shadow-md transition-shadow cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                      item.gate === 1 ? 'bg-green-50 border-green-100 dark:bg-green-900/10 dark:border-green-900/30' :
+                      item.gate === 2 ? 'bg-blue-50 border-blue-100 dark:bg-blue-900/10 dark:border-blue-900/30' :
+                      'bg-purple-50 border-purple-100 dark:bg-purple-900/10 dark:border-purple-900/30'
+                    }`}
+                      onClick={() => {
+                        setSelectedItem(item);
+                        setIsHistoryModalOpen(true);
+                      }}
+                      title="Ver histórico detalhado"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-semibold text-gray-900 dark:text-white">{item.sku}</span>
+                        <span className={`text-xs px-2 py-1 rounded-full font-bold flex items-center justify-center ${
+                          item.gate === 1 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                          item.gate === 2 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                          'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                        }`}>Gate {item.gate}</span>
+                      </div>
+                      <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                        <p>Cliente: <span className="text-gray-900 dark:text-gray-200">{item.client_name}</span></p>
+                        <p>Gestor: <span className="text-gray-900 dark:text-gray-200">{item.manager || '-'}</span></p>
+                        <p>Preço Atual: <span className="text-gray-900 dark:text-gray-200">
+                          {item.gross_price ? item.gross_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}
+                        </span>
+                        {item.last_price_date && (
+                          <span className="text-xs text-gray-500 ml-2">
+                             ({format(new Date(item.last_price_date), 'dd/MM/yy')})
+                          </span>
+                        )}
+                        </p>
+                        <p>Comunicação: <span className={`${
+                          item.daysRemaining < 0 ? 'text-red-600 font-medium' : 'text-gray-900 dark:text-gray-200'
+                        }`}>
+                          {item.communicationDate ? format(item.communicationDate, 'dd/MM/yyyy') : '-'}
+                        </span></p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  Nenhum item encontrado para esta seleção.
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 rounded-b-xl flex justify-end">
+              <button
+                onClick={() => setModalData({ ...modalData, isOpen: false })}
+                className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <Header 
         user={user} 
         title="Gestão de Pricing" 
-        subtitle="Customer Success" 
+        subtitle="Client Success" 
         showBack={false} 
         logoRedirect="/select"
       />
 
       <div className="max-w-[1600px] mx-auto mt-8 px-6 pb-12">
         
+        {/* Widget de Burn-down (Gestão por Exceção) */}
+        <div className="bg-white dark:bg-[#0a0a0a] rounded-lg p-6 mb-8 shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-5">
+            <div className={`p-4 rounded-xl transition-colors ${
+              advancedStats.burndown.overdue > 0 
+                ? 'bg-red-50 text-[#EF4444] dark:bg-red-900/10' 
+                : 'bg-green-50 text-[#64D020] dark:bg-green-900/10'
+            }`}>
+              <Flame className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-gray-900 dark:text-white font-bold text-xl mb-1">Radar de Urgência</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm flex items-center gap-3">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                  <strong className="text-gray-900 dark:text-white">{advancedStats.burndown.dueThisWeek}</strong> para comunicar esta semana
+                </span>
+                <span className="w-px h-4 bg-gray-200 dark:bg-gray-700"></span>
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${advancedStats.burndown.overdue > 0 ? 'bg-[#EF4444]' : 'bg-green-500'}`}></span>
+                  <strong className={`${advancedStats.burndown.overdue > 0 ? 'text-[#EF4444]' : 'text-green-500'}`}>
+                    {advancedStats.burndown.overdue}
+                  </strong> em atraso
+                </span>
+              </p>
+            </div>
+          </div>
+          
+          <button
+            onClick={() => setFilters(prev => ({ ...prev, status: prev.status === 'critical' ? '' : 'critical' }))}
+            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all duration-200 border ${
+              filters.status === 'critical' 
+                ? 'bg-[#EF4444] text-white border-[#EF4444] shadow-lg shadow-red-500/20' 
+                : 'bg-white dark:bg-[#171717] text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+          >
+            <Target className="w-5 h-5" />
+            {filters.status === 'critical' ? 'Remover Foco' : 'Focar no Crítico'}
+          </button>
+        </div>
+
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+          {/* Card 1: Panorama da Carteira */}
+          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Contratos</p>
                 <h3 className="text-2xl font-bold text-gray-900 dark:text-white mt-2">{kpis.totalContracts}</h3>
               </div>
-              <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                <CalendarDays className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+              <div className="p-2 rounded-lg bg-gray-100 dark:bg-gray-800">
+                <LayoutGrid className="w-6 h-6 text-gray-500 dark:text-gray-400" />
+              </div>
+            </div>
+            
+            {/* Visual Distribution Bar */}
+            <div className="mt-4">
+              <div className="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800">
+                {kpis.totalContracts > 0 && (
+                  <>
+                    <div style={{ width: `${(kpis.gate1Count / kpis.totalContracts) * 100}%` }} className="bg-[#64D020]" />
+                    <div style={{ width: `${(kpis.gate2Count / kpis.totalContracts) * 100}%` }} className="bg-[#1AC6FC]" />
+                    <div style={{ width: `${(kpis.gate3Count / kpis.totalContracts) * 100}%` }} className="bg-[#845AFA]" />
+                  </>
+                )}
+              </div>
+              <div className="flex justify-between mt-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#64D020]"></span>G1: {kpis.gate1Count}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#1AC6FC]"></span>G2: {kpis.gate2Count}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#845AFA]"></span>G3: {kpis.gate3Count}</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+          {/* Card 2: Radar de Urgência */}
+          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col justify-between relative overflow-hidden">
+             {/* Red Accent Border */}
+             <div className="absolute top-0 left-0 w-1 h-full bg-[#EF4444]"></div>
+             
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Próximos 30 Dias (Comunicação)</p>
-                <h3 className="text-2xl font-bold text-orange-600 dark:text-orange-400 mt-2">{kpis.criticalContracts}</h3>
+                <h3 className="text-2xl font-bold text-[#EF4444] mt-2">{kpis.criticalContracts}</h3>
+                <p className="text-xs text-[#EF4444] mt-1 font-medium bg-[#EF4444]/10 px-2 py-1 rounded inline-block">
+                  Impacto: {kpis.criticalFinancialImpact.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </p>
               </div>
-              <div className="p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
-                <AlertTriangle className="w-6 h-6 text-orange-600 dark:text-orange-400" />
+              <div className="p-2 rounded-lg bg-[#EF4444]/10 dark:bg-[#EF4444]/20 animate-pulse">
+                <AlertCircle className="w-6 h-6 text-[#EF4444]" />
               </div>
             </div>
           </div>
 
-          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+          {/* Card 3: Próximo Ciclo */}
+          <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Reajustes Próximo Mês</p>
-                <h3 className="text-2xl font-bold text-green-600 dark:text-green-400 mt-2">{kpis.nextMonthReajust}</h3>
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Próximo Gate de Reajuste</p>
+                <h3 className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-2">{kpis.nextGateSkus} <span className="text-sm font-normal text-gray-500 dark:text-gray-400">SKUs no Gate {kpis.nextGate}</span></h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Vigência prevista para {kpis.nextGateStartMonth}
+                </p>
               </div>
-              <div className="p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                <TrendingUp className="w-6 h-6 text-green-600 dark:text-green-400" />
+              <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                <TrendingUp className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
             </div>
           </div>
@@ -241,100 +1003,732 @@ const CS = ({ user }) => {
 
         {/* Filtros e Ações */}
         <div className="bg-white dark:bg-[#0a0a0a] p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 mb-6">
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div className="flex flex-wrap gap-4 flex-1">
-              <div className="relative w-full md:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Buscar Cliente..."
-                  value={filters.client}
-                  onChange={(e) => setFilters(prev => ({ ...prev, client: e.target.value }))}
-                  className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+          <div className="flex items-center justify-between mb-4">
+            {/* Header dos Filtros */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Filtros
+                </h3>
               </div>
-              <div className="relative w-full md:w-48">
-                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Buscar SKU..."
-                  value={filters.sku}
-                  onChange={(e) => setFilters(prev => ({ ...prev, sku: e.target.value }))}
-                  className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              <select
-                value={filters.gate}
-                onChange={(e) => setFilters(prev => ({ ...prev, gate: e.target.value }))}
-                className="w-full md:w-32 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none"
-              >
-                <option value="">Todos Gates</option>
-                <option value="1">Gate 1</option>
-                <option value="2">Gate 2</option>
-                <option value="3">Gate 3</option>
-              </select>
+              
+              {(filters.manager || filters.client || filters.sku || filters.datasulCode || filters.gate || filters.dateFrom || filters.dateTo || filters.communicationStatus) && (
+                <button 
+                  onClick={() => setFilters({
+                    manager: '', client: '', sku: '', category: '', subcategory: '', size: '', datasulCode: '', gate: '', dateFrom: '', dateTo: '', communicationStatus: ''
+                  })}
+                  className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-400 rounded-full transition-colors"
+                >
+                  <X size={14} />
+                  Limpar Filtros
+                </button>
+              )}
             </div>
             
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors">
-                    <Info className="w-4 h-4" />
-                    Regras de Gate
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="bg-white dark:bg-gray-800 p-4 max-w-sm shadow-lg border border-gray-200 dark:border-gray-700">
-                  <div className="space-y-2 text-sm">
-                    <p className="font-bold border-b pb-1 mb-2">Lógica de Gates</p>
-                    <p><span className="font-semibold text-blue-600">Gate 1:</span> Aniv. Nov-Fev → Vigência Fev</p>
-                    <p><span className="font-semibold text-green-600">Gate 2:</span> Aniv. Mar-Jun → Vigência Mai</p>
-                    <p><span className="font-semibold text-purple-600">Gate 3:</span> Aniv. Jul-Out → Vigência Out</p>
-                    <p className="text-xs text-gray-500 mt-2">*Comunicação deve ocorrer ~30 dias antes da vigência.</p>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                title="Exportar Lista de Ação"
+              >
+                <Download className="w-4 h-4" />
+                Exportar
+              </button>
+              <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                <button
+                  onClick={() => setViewMode('dashboard')}
+                  className={`p-2 rounded-md transition-all ${viewMode === 'dashboard' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
+                  title="Visualização em Dashboard"
+                >
+                  <LayoutDashboard size={20} />
+                </button>
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
+                  title="Visualização em Tabela"
+                >
+                  <TableIcon size={20} />
+                </button>
+              </div>
+            </div>
           </div>
+
+            {/* Grid de Filtros */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Gestor</label>
+                <SearchableSelect
+                  options={managerOptions}
+                  value={filters.manager}
+                  onChange={(value) => handleFilterChange('manager', value)}
+                  placeholder="Todos os gestores"
+                  searchPlaceholder="Buscar gestor..."
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">SKU</label>
+                <SearchableSelect
+                  options={skuOptions}
+                  value={filters.sku}
+                  onChange={(value) => handleFilterChange('sku', value)}
+                  placeholder="Todos os SKUs"
+                  searchPlaceholder="Buscar SKU..."
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Cliente</label>
+                <SearchableSelect
+                  options={clientOptions}
+                  value={filters.client}
+                  onChange={(value) => handleFilterChange('client', value)}
+                  placeholder="Todos os clientes"
+                  searchPlaceholder="Buscar cliente..."
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Período (Vigência)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    value={filters.dateFrom}
+                    onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none h-[42px] focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                  <input
+                    type="date"
+                    value={filters.dateTo}
+                    onChange={(e) => handleFilterChange('dateTo', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none h-[42px] focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                </div>
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Gate</label>
+                <div className="relative">
+                  <select
+                    value={filters.gate}
+                    onChange={(e) => handleFilterChange('gate', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500/20 outline-none h-[42px] transition-all appearance-none cursor-pointer"
+                  >
+                    <option value="">Todos Gates</option>
+                    <option value="1">Gate 1</option>
+                    <option value="2">Gate 2</option>
+                    <option value="3">Gate 3</option>
+                  </select>
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Status do Reajuste</label>
+                <div className="relative">
+                  <select
+                    value={filters.communicationStatus}
+                    onChange={(e) => handleFilterChange('communicationStatus', e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500/20 outline-none h-[42px] transition-all appearance-none cursor-pointer"
+                  >
+                    <option value="">Todos Status</option>
+                    <option value="Em Análise">Em Análise</option>
+                    <option value="Comunicado">Comunicado</option>
+                    <option value="Em Negociação">Em Negociação</option>
+                    <option value="Aprovado">Aprovado</option>
+                    <option value="Implementado">Implementado</option>
+                  </select>
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botão de Regras de Gate (Popover) */}
+              <div className="flex items-end pb-1">
+                 <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors h-[32px]">
+                      <HelpCircle className="w-3.5 h-3.5" />
+                      Regras de Gate
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] p-0 bg-white dark:bg-[#171717] border border-gray-200 dark:border-gray-800 shadow-xl overflow-hidden">
+                    <div className="p-4 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+                      <h4 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Info className="w-4 h-4 text-blue-500" />
+                        Cronograma Operacional
+                      </h4>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Ciclo de reajuste anual baseado no mês de aniversário.
+                      </p>
+                    </div>
+                    
+                    <div className="p-4 space-y-4">
+                      {/* Gate 1 */}
+                      <div className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-1.5"></div>
+                          <div className="w-0.5 h-full bg-gray-100 dark:bg-gray-800 my-1"></div>
+                        </div>
+                        <div className="flex-1 pb-2">
+                          <h5 className="font-bold text-sm text-green-700 dark:text-green-400 mb-1">Gate 1 (Verde)</h5>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-green-50 dark:bg-green-900/10 p-2 rounded border border-green-100 dark:border-green-900/20">
+                              <span className="font-semibold block mb-0.5">Análise</span>
+                              Novembro, Dezembro, Janeiro, Fevereiro
+                            </div>
+                            <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                              <span className="font-semibold block mb-0.5">Comunicação</span>
+                              30 dias antes
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Gate 2 */}
+                      <div className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-blue-500 mt-1.5"></div>
+                          <div className="w-0.5 h-full bg-gray-100 dark:bg-gray-800 my-1"></div>
+                        </div>
+                        <div className="flex-1 pb-2">
+                          <h5 className="font-bold text-sm text-blue-700 dark:text-blue-400 mb-1">Gate 2 (Azul)</h5>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-blue-50 dark:bg-blue-900/10 p-2 rounded border border-blue-100 dark:border-blue-900/20">
+                              <span className="font-semibold block mb-0.5">Análise</span>
+                              Março, Abril, Maio, Junho
+                            </div>
+                            <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                              <span className="font-semibold block mb-0.5">Comunicação</span>
+                              30 dias antes
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Gate 3 */}
+                      <div className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-purple-500 mt-1.5"></div>
+                        </div>
+                        <div className="flex-1">
+                          <h5 className="font-bold text-sm text-purple-700 dark:text-purple-400 mb-1">Gate 3 (Roxo)</h5>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-purple-50 dark:bg-purple-900/10 p-2 rounded border border-purple-100 dark:border-purple-900/20">
+                              <span className="font-semibold block mb-0.5">Análise</span>
+                              Julho, Agosto, Setembro, Outubro
+                            </div>
+                            <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                              <span className="font-semibold block mb-0.5">Comunicação</span>
+                              30 dias antes
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-gray-50 dark:bg-gray-900/30 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Comunicação obrigatória 30 dias antes da vigência.</span>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
         </div>
 
-        {/* Tabela de Contratos */}
-        <div className="bg-white dark:bg-[#0a0a0a] rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
+        {/* Conteúdo: Dashboard ou Tabela */}
+        {viewMode === 'dashboard' ? (
+          <div className="space-y-6">
+            
+            {/* 1. Gate + Matriz de Carga de Trabalho (Topo) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Gráfico de Gates */}
+              <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Distribuição por Gate</h3>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsPieChart className="cursor-pointer">
+                      <defs>
+                        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur" />
+                          <feOffset in="blur" dx="2" dy="2" result="offsetBlur" />
+                          <feFlood floodColor="rgba(0,0,0,0.3)" result="color" />
+                          <feComposite in="color" in2="offsetBlur" operator="in" result="shadow" />
+                          <feComposite in="SourceGraphic" in2="shadow" operator="over" />
+                        </filter>
+                      </defs>
+                      <Pie
+                        data={chartData.gateData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={5}
+                        dataKey="value"
+                        stroke="none"
+                        filter="url(#shadow)"
+                        onClick={(data) => handleChartClick(data, 'gate')}
+                        isAnimationActive={true}
+                      >
+                        {chartData.gateData.map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={entry.color} 
+                            stroke="rgba(255,255,255,0.2)" 
+                            strokeWidth={2}
+                          />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#fff', 
+                          border: '1px solid #e5e7eb', 
+                          borderRadius: '12px', 
+                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                          color: '#374151'
+                        }}
+                        itemStyle={{ color: '#374151' }}
+                      />
+                      <Legend />
+                    </RechartsPieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Matriz de Carga de Trabalho (Heatmap) */}
+              <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Distribuição de Carteira</h3>
+                  <div className="text-xs text-gray-500">Volume de SKUs por Gestor/Gate</div>
+                </div>
+                
+                <div className="flex-1 overflow-auto custom-scrollbar">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr>
+                        <th className="text-left py-2 font-medium text-gray-500">Gestor</th>
+                        <th className="text-center py-2 font-medium text-[#64D020]">Gate 1</th>
+                        <th className="text-center py-2 font-medium text-[#1AC6FC]">Gate 2</th>
+                        <th className="text-center py-2 font-medium text-[#845AFA]">Gate 3</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {advancedStats.workloadData.map((item) => (
+                        <tr key={item.manager} className="group hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
+                          <td className="py-3 font-medium text-gray-700 dark:text-gray-300">{item.manager}</td>
+                          
+                          {/* Gate 1 Cell */}
+                          <td className="p-1">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div 
+                                    onClick={() => handleWorkloadClick(item.manager, 1)}
+                                    className="h-full w-full min-h-[32px] rounded flex items-center justify-center text-xs font-bold transition-all hover:scale-105 cursor-pointer"
+                                    style={{ 
+                                      backgroundColor: `rgba(100, 208, 32, ${Math.min(0.1 + (item.gate1 / 20), 0.9)})`,
+                                      color: item.gate1 > 10 ? '#fff' : '#14532d'
+                                    }}
+                                  >
+                                    {item.gate1 > 0 ? item.gate1 : '-'}
+                                  </div>
+                                </TooltipTrigger>
+                                {item.gate1 > 0 && (
+                                  <TooltipContent>
+                                    <div className="font-semibold mb-1">Principais Clientes:</div>
+                                    <div className="text-xs">{item.gate1Tooltip}</div>
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+                          </td>
+
+                          {/* Gate 2 Cell */}
+                          <td className="p-1">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div 
+                                    onClick={() => handleWorkloadClick(item.manager, 2)}
+                                    className="h-full w-full min-h-[32px] rounded flex items-center justify-center text-xs font-bold transition-all hover:scale-105 cursor-pointer"
+                                    style={{ 
+                                      backgroundColor: `rgba(26, 198, 252, ${Math.min(0.1 + (item.gate2 / 20), 0.9)})`,
+                                      color: item.gate2 > 10 ? '#fff' : '#0c4a6e'
+                                    }}
+                                  >
+                                    {item.gate2 > 0 ? item.gate2 : '-'}
+                                  </div>
+                                </TooltipTrigger>
+                                {item.gate2 > 0 && (
+                                  <TooltipContent>
+                                    <div className="font-semibold mb-1">Principais Clientes:</div>
+                                    <div className="text-xs">{item.gate2Tooltip}</div>
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+                          </td>
+
+                          {/* Gate 3 Cell */}
+                          <td className="p-1">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div 
+                                    onClick={() => handleWorkloadClick(item.manager, 3)}
+                                    className="h-full w-full min-h-[32px] rounded flex items-center justify-center text-xs font-bold transition-all hover:scale-105 cursor-pointer"
+                                    style={{ 
+                                      backgroundColor: `rgba(132, 90, 250, ${Math.min(0.1 + (item.gate3 / 20), 0.9)})`,
+                                      color: item.gate3 > 10 ? '#fff' : '#4c1d95'
+                                    }}
+                                  >
+                                    {item.gate3 > 0 ? item.gate3 : '-'}
+                                  </div>
+                                </TooltipTrigger>
+                                {item.gate3 > 0 && (
+                                  <TooltipContent>
+                                    <div className="font-semibold mb-1">Principais Clientes:</div>
+                                    <div className="text-xs">{item.gate3Tooltip}</div>
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {advancedStats.workloadData.length === 0 && (
+                     <div className="text-center text-gray-500 py-8">Nenhum dado para exibir</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Timeline Chart (Gantt Simplificado) (Meio) */}
+            <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                  <CalendarClock className="w-5 h-5 text-blue-500" />
+                  Timeline de Comunicações (Próximos 60 Dias)
+                </h3>
+                <div className="flex items-center gap-4 text-xs">
+                  <div className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-[#EF4444] rounded-sm"></span>
+                    <span className="text-gray-500">Atrasado</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-blue-500 rounded-sm"></span>
+                    <span className="text-gray-500">Futuro</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="h-[250px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsBarChart 
+                    data={advancedStats.timelineData} 
+                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    onClick={(data) => {
+                      if (data && data.activePayload && data.activePayload.length > 0) {
+                        handleChartClick(data.activePayload[0].payload, 'timeline');
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <defs>
+                      <filter id="timelineShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur" />
+                        <feOffset in="blur" dx="2" dy="2" result="offsetBlur" />
+                        <feFlood floodColor="rgba(0,0,0,0.3)" result="color" />
+                        <feComposite in="color" in2="offsetBlur" operator="in" result="shadow" />
+                        <feComposite in="SourceGraphic" in2="shadow" operator="over" />
+                      </filter>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} opacity={0.1} />
+                    <XAxis 
+                      dataKey="displayDate" 
+                      tick={{ fill: '#666', fontSize: 10 }} 
+                      interval={6}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis 
+                      tick={{ fill: '#666', fontSize: 11 }} 
+                      allowDecimals={false}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <RechartsTooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#fff', 
+                        border: '1px solid #e5e7eb', 
+                        borderRadius: '12px', 
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        color: '#374151'
+                      }}
+                      cursor={{ fill: 'rgba(59, 130, 246, 0.05)' }}
+                      formatter={(value, name, props) => {
+                        const financialValue = props.payload.financialValue;
+                        return [
+                          <div key="val" className="flex flex-col gap-1">
+                            <span>{value} SKUs</span>
+                            <span className="text-xs font-medium text-gray-500">
+                              Impacto: {financialValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </span>
+                          </div>,
+                          name === 'count' ? 'Quantidade' : name
+                        ];
+                      }}
+                    />
+                    <ReferenceLine x={format(new Date(), 'dd/MM')} stroke="#EF4444" strokeDasharray="3 3" label={{ value: 'Hoje', fill: '#EF4444', fontSize: 12, position: 'top' }} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} filter="url(#timelineShadow)" isAnimationActive={true}>
+                      {advancedStats.timelineData.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={entry.isPast ? '#EF4444' : '#3B82F6'} 
+                          opacity={entry.isPast ? 0.8 : 1}
+                        />
+                      ))}
+                    </Bar>
+                  </RechartsBarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* 3. Status + Reajustes (Fim) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Gráfico de Status */}
+              <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Status dos Contratos</h3>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsPieChart>
+                      <defs>
+                        <filter id="statusShadow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur" />
+                          <feOffset in="blur" dx="2" dy="2" result="offsetBlur" />
+                          <feFlood floodColor="rgba(0,0,0,0.3)" result="color" />
+                          <feComposite in="color" in2="offsetBlur" operator="in" result="shadow" />
+                          <feComposite in="SourceGraphic" in2="shadow" operator="over" />
+                        </filter>
+                      </defs>
+                      <Pie
+                        data={chartData.statusData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={0}
+                        outerRadius={100}
+                        dataKey="value"
+                        stroke="none"
+                        filter="url(#statusShadow)"
+                        isAnimationActive={true}
+                      >
+                        {chartData.statusData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: '#171717', border: 'none', borderRadius: '8px', color: '#fff' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Legend />
+                    </RechartsPieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Gráfico de Reajustes Mensais */}
+              <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Previsão de Reajustes (12 Meses)</h3>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsBarChart data={chartData.monthlyChartData}>
+                      <defs>
+                        <filter id="barShadow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur" />
+                          <feOffset in="blur" dx="2" dy="2" result="offsetBlur" />
+                          <feFlood floodColor="rgba(132, 90, 250, 0.3)" result="color" />
+                          <feComposite in="color" in2="offsetBlur" operator="in" result="shadow" />
+                          <feComposite in="SourceGraphic" in2="shadow" operator="over" />
+                        </filter>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                      <XAxis dataKey="name" stroke="#666" tick={{ fill: '#666' }} />
+                      <YAxis stroke="#666" tick={{ fill: '#666' }} />
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: '#171717', border: 'none', borderRadius: '8px', color: '#fff' }}
+                        itemStyle={{ color: '#fff' }}
+                        cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
+                      />
+                      <Bar 
+                        dataKey="value" 
+                        name="Contratos" 
+                        fill="#845AFA" 
+                        radius={[4, 4, 0, 0]} 
+                        filter="url(#barShadow)"
+                        isAnimationActive={true}
+                      />
+                    </RechartsBarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Detalhamento de SKUs e Clientes */}
+            {(filters.gate || filters.manager) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col h-[400px]">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center justify-between">
+                    <span>Clientes na Seleção</span>
+                    <span className="text-xs font-normal text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
+                      {[...new Set(filteredData.map(i => i.client_name))].length} clientes
+                    </span>
+                  </h3>
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+                    {[...new Set(filteredData.map(i => i.client_name))].sort().map((client, idx) => (
+                      <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-sm text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors">
+                        {client}
+                      </div>
+                    ))}
+                    {filteredData.length === 0 && (
+                       <p className="text-gray-500 text-center py-4">Nenhum cliente encontrado</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-[#0a0a0a] p-6 rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col h-[400px]">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center justify-between">
+                    <span>SKUs na Seleção</span>
+                    <span className="text-xs font-normal text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
+                      {[...new Set(filteredData.map(i => i.sku))].length} SKUs
+                    </span>
+                  </h3>
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+                    {[...new Set(filteredData.map(i => i.sku))].sort().map((sku, idx) => (
+                      <div 
+                        key={idx} 
+                        className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-sm text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors flex justify-between items-center cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
+                        onClick={() => {
+                          const item = filteredData.find(i => i.sku === sku);
+                          if (item) {
+                            setSelectedItem(item);
+                            setIsHistoryModalOpen(true);
+                          }
+                        }}
+                      >
+                        <span>{sku}</span>
+                        <span className="text-xs text-gray-400">
+                           {filteredData.find(i => i.sku === sku)?.client_name}
+                        </span>
+                      </div>
+                    ))}
+                    {filteredData.length === 0 && (
+                       <p className="text-gray-500 text-center py-4">Nenhum SKU encontrado</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-[#0a0a0a] rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
                 <tr>
+                  <th className="px-6 py-4 font-semibold text-center w-[180px]">Status do Reajuste</th>
                   <th className="px-6 py-4 font-semibold">Cliente</th>
+                  <th className="px-6 py-4 font-semibold">Gestor</th>
                   <th className="px-6 py-4 font-semibold">Código</th>
                   <th className="px-6 py-4 font-semibold">SKU</th>
                   <th className="px-6 py-4 font-semibold text-center">Gate</th>
+                  <th className="px-6 py-4 font-semibold">Último Preço</th>
                   <th className="px-6 py-4 font-semibold">Próx. Comunicação</th>
                   <th className="px-6 py-4 font-semibold">Próx. Vigência</th>
-                  <th className="px-6 py-4 font-semibold text-center">Status</th>
-                  <th className="px-6 py-4 font-semibold text-right">Ações</th>
+                  <th 
+                    className="px-6 py-4 font-semibold text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    onClick={() => requestSort('readjustment_pct')}
+                  >
+                    % Reajuste
+                    {sortConfig.key === 'readjustment_pct' && (
+                      <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {loading ? (
                   <tr>
-                    <td colSpan="8" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="10" className="px-6 py-8 text-center text-gray-500">
                       Carregando dados...
                     </td>
                   </tr>
                 ) : filteredData.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="10" className="px-6 py-8 text-center text-gray-500">
                       Nenhum contrato encontrado.
                     </td>
                   </tr>
                 ) : (
-                  filteredData.map((item) => (
+                  sortedData.map((item) => (
                     <tr 
                       key={item.id}
                       onClick={() => handleRowClick(item)}
                       className="bg-white dark:bg-[#0a0a0a] hover:bg-gray-50 dark:hover:bg-gray-900/50 cursor-pointer transition-colors"
                     >
+                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <Select
+                          value={item.readjustment_status || 'Em Análise'}
+                          onValueChange={(value) => handleStatusChange(item, value)}
+                        >
+                          <SelectTrigger className={`w-[160px] h-8 text-xs font-medium border-0 focus:ring-0 focus:ring-offset-0 ${WORKFLOW_STATUS_OPTIONS.find(opt => opt.value === (item.readjustment_status || 'Em Análise'))?.color || 'bg-gray-100 text-gray-700'}`}>
+                            <SelectValue placeholder="Status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {WORKFLOW_STATUS_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value} className="text-xs">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${option.color.split(' ')[0]}`}></div>
+                                  {option.label}
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
                       <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
                         {item.client_name}
+                      </td>
+                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                        {isPricingUser ? (
+                          <Select
+                            value={item.manager || ''}
+                            onValueChange={(value) => handleUpdateField(item, 'manager', value)}
+                          >
+                            <SelectTrigger className="w-full min-w-[120px] h-8 text-xs font-medium border-0 focus:ring-0 focus:ring-offset-0 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-2">
+                              <SelectValue placeholder="-" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {managerOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value} className="text-xs">
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          item.manager || '-'
+                        )}
                       </td>
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
                         {item.code}
@@ -342,47 +1736,61 @@ const CS = ({ user }) => {
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
                         {item.sku}
                       </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold
-                          ${item.gate === 1 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 
-                            item.gate === 2 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
-                            'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'}`}>
-                          G{item.gate}
-                        </span>
+                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        {isPricingUser ? (
+                          <Select
+                            value={item.gate ? item.gate.toString() : '1'}
+                            onValueChange={(value) => handleUpdateField(item, 'gate', parseInt(value))}
+                          >
+                            <SelectTrigger className={`w-14 h-8 text-xs font-bold border-0 focus:ring-0 justify-center mx-auto rounded-full
+                              ${item.gate === 1 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
+                                item.gate === 2 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 
+                                'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'}`}>
+                              <span>G{item.gate}</span>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="1" className="text-xs font-medium text-green-600">Gate 1</SelectItem>
+                              <SelectItem value="2" className="text-xs font-medium text-blue-600">Gate 2</SelectItem>
+                              <SelectItem value="3" className="text-xs font-medium text-purple-600">Gate 3</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold
+                            ${item.gate === 1 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 
+                              item.gate === 2 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 
+                              'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'}`}>
+                            G{item.gate}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
                         <div className="flex flex-col">
-                          <span>{item.communicationDate ? format(item.communicationDate, 'dd/MM/yyyy') : '-'}</span>
-                          {item.daysRemaining !== null && (
-                            <span className={`text-xs font-medium mt-1 
-                              ${item.daysRemaining <= 30 ? 'text-red-600 dark:text-red-400' : 'text-gray-400'}`}>
-                              {item.daysRemaining} dias restantes
-                            </span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {item.gross_price ? item.gross_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}
+                          </span>
+                          {item.last_price_date && (
+                             <span className="text-xs text-gray-500">
+                               {format(new Date(item.last_price_date), 'dd/MM/yyyy')}
+                             </span>
                           )}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                        {item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
                         {item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'}
                       </td>
-                      <td className="px-6 py-4 text-center">
-                        {item.status === 'critical' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                            Atenção
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                            Em dia
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button 
-                          onClick={(e) => handleEditClick(e, item)}
-                          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500 hover:text-blue-600"
-                          title="Editar/Observar"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
+                      <td className="px-6 py-4 text-right font-medium">
+                        <div className={`flex items-center justify-end gap-1 ${
+                            item.readjustment_pct > 0 ? 'text-green-600 dark:text-green-400' : 
+                            item.readjustment_pct < 0 ? 'text-red-600 dark:text-red-400' : 
+                            'text-gray-500'
+                        }`}>
+                            {item.readjustment_pct > 0 ? <TrendingUp size={14} /> : 
+                             item.readjustment_pct < 0 ? <TrendingDown size={14} /> : null}
+                            {item.readjustment_pct ? item.readjustment_pct.toFixed(2) : '0.00'}%
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -391,6 +1799,7 @@ const CS = ({ user }) => {
             </table>
           </div>
         </div>
+        )}
       </div>
 
       {/* Modal de Histórico */}
@@ -400,6 +1809,8 @@ const CS = ({ user }) => {
         sku={selectedItem?.sku}
         clientId={selectedItem?.client_id}
         clientName={selectedItem?.client_name}
+        readjustmentStatus={selectedItem?.readjustment_status}
+        onStatusChange={(newStatus) => selectedItem && handleStatusChange(selectedItem, newStatus)}
       />
 
       {/* Modal de Edição */}

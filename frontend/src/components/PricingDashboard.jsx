@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import SearchableSelect from './SearchableSelect';
+import { calculateGate, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
 
 const PricingDashboard = ({ user }) => {
   const navigate = useNavigate();
@@ -48,6 +49,39 @@ const PricingDashboard = ({ user }) => {
     datasulCode: ''
   });
   const [showNewPriceModal, setShowNewPriceModal] = useState(false);
+  const [basePriceId, setBasePriceId] = useState('');
+
+  // Prepare options for base price selection
+  const basePriceOptions = useMemo(() => {
+    return pricingData.map(p => ({
+      value: p.id,
+      label: `${p.sku} - ${p.clients?.name || 'Sem cliente'} - ${p.month || '-'} - ${p.currency === 'USD' ? '$' : 'R$'} ${Number(p.net_price).toFixed(2)}`
+    }));
+  }, [pricingData]);
+
+  const handleBasePriceChange = (value) => {
+    setBasePriceId(value);
+    const selectedPrice = pricingData.find(p => p.id === value);
+    if (selectedPrice) {
+      setNewPriceForm(prev => ({
+        ...prev,
+        client_id: selectedPrice.client_id,
+        sku: selectedPrice.sku,
+        net_price: selectedPrice.net_price,
+        gross_price: selectedPrice.gross_price || '',
+        margin_budget: selectedPrice.margin_budget || '',
+        size: selectedPrice.size || '',
+        manager: selectedPrice.manager || '',
+        code: selectedPrice.code || '',
+        category: selectedPrice.category || '',
+        subcategory: selectedPrice.subcategory || '',
+        month: selectedPrice.date ? selectedPrice.date.split('T')[0] : '', // Use date for month input to ensure it's populated
+        date: new Date().toISOString().split('T')[0], // Keep current date for new entry
+        obs: selectedPrice.obs || '',
+        currency: selectedPrice.currency || 'BRL'
+      }));
+    }
+  };
   const [showImportModal, setShowImportModal] = useState(false);
 
   const [importFile, setImportFile] = useState(null);
@@ -138,6 +172,29 @@ const PricingDashboard = ({ user }) => {
   useEffect(() => {
     loadData();
   }, [filters.dateFrom, filters.dateTo]);
+
+  // Realtime Subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('pricing_dashboard_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pricing_history'
+        },
+        (payload) => {
+          // Update data without full reload if possible, but loadData is safer for consistency
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const loadData = async () => {
     try {
@@ -591,7 +648,10 @@ const PricingDashboard = ({ user }) => {
               month: monthStr || null,
               date: date.toISOString().split('T')[0],
               obs: row['obs']?.toString().trim() || null,
-              currency: currency
+              currency: currency,
+              gate: calculateGate(date.getMonth()),
+              readjustment_status: 'Em Análise',
+              communication_status: 'pending'
             });
             successCount++;
           }
@@ -663,10 +723,31 @@ const PricingDashboard = ({ user }) => {
         code: newPriceForm.code?.trim() || null,
         category: newPriceForm.category?.trim() || null,
         subcategory: newPriceForm.subcategory?.trim() || null,
-        month: newPriceForm.month?.trim() || null,
+        month: newPriceForm.month ? (() => {
+          const [y, m, d] = newPriceForm.month.split('-');
+          return format(new Date(y, m - 1, d), 'MMM/yy', { locale: ptBR });
+        })() : null,
         date: newPriceForm.date,
         obs: newPriceForm.obs?.trim() || null,
-        currency: newPriceForm.currency || 'BRL'
+        currency: newPriceForm.currency || 'BRL',
+        gate: (() => {
+          let monthIndex;
+          if (newPriceForm.month) {
+            const [y, m, d] = newPriceForm.month.split('-').map(Number);
+            monthIndex = m - 1;
+          } else if (newPriceForm.date) {
+            const [y, m, d] = newPriceForm.date.split('-').map(Number);
+            monthIndex = m - 1;
+          } else {
+            return null;
+          }
+          return calculateGate(monthIndex);
+        })(),
+        // Default CS workflow status for new entries
+        ...(!editingId && {
+          readjustment_status: 'Em Análise',
+          communication_status: 'pending'
+        })
       };
 
       let error;
@@ -728,7 +809,7 @@ const PricingDashboard = ({ user }) => {
       code: item.code || '',
       category: item.category || '',
       subcategory: item.subcategory || '',
-      month: item.month || '',
+      month: item.date ? item.date.split('T')[0] : '', // Use date to populate month input
       date: item.date.split('T')[0],
       obs: item.obs || '',
       currency: item.currency || 'BRL'
@@ -832,6 +913,7 @@ const PricingDashboard = ({ user }) => {
                 <button
                   onClick={() => {
                     setEditingId(null);
+                    setBasePriceId('');
                     setNewPriceForm({
                       client_id: '',
                       sku: '',
@@ -1121,6 +1203,12 @@ const PricingDashboard = ({ user }) => {
                       Mês
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Gate
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status CS
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Categoria
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1188,6 +1276,20 @@ const PricingDashboard = ({ user }) => {
                           {item.month || '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                          {item.gate ? `Gate ${item.gate}` : (item.date ? `Gate ${calculateGate(new Date(item.date).getMonth())}` : '-')}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {item.readjustment_status ? (
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
+                              WORKFLOW_STATUS_OPTIONS.find(opt => opt.value === item.readjustment_status)?.color || 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+                            }`}>
+                              {item.readjustment_status}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.category || '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
@@ -1252,8 +1354,8 @@ const PricingDashboard = ({ user }) => {
         {/* Modal de Novo Preço */}
         {showNewPriceModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-[#171717] rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col mx-auto shadow-xl border dark:border-gray-800">
-              <div className="flex items-center justify-between p-6 border-b dark:border-gray-800 shrink-0 bg-white dark:bg-[#171717] rounded-t-lg">
+            <div className="bg-white dark:bg-[#171717] rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-auto shadow-xl border dark:border-gray-800 overflow-hidden">
+              <div className="flex items-center justify-between p-6 border-b dark:border-gray-800 shrink-0 bg-white dark:bg-[#171717]">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                   {editingId ? 'Editar Preço' : 'Novo Preço'}
                 </h2>
@@ -1261,6 +1363,7 @@ const PricingDashboard = ({ user }) => {
                   onClick={() => {
                     setShowNewPriceModal(false);
                     setEditingId(null);
+                    setBasePriceId('');
                   }}
                   className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500 dark:text-gray-400"
                 >
@@ -1268,9 +1371,24 @@ const PricingDashboard = ({ user }) => {
                 </button>
               </div>
               
-              <div className="p-6 overflow-y-auto">
+              <div className="p-6 overflow-y-auto flex-1">
                 <form onSubmit={handleNewPriceSubmit} id="newPriceForm" className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
+                    {!editingId && (
+                      <div className="col-span-2 mb-2 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                          <Upload size={16} className="text-gray-500" />
+                          Usar preço existente como base
+                        </label>
+                        <SearchableSelect
+                          options={basePriceOptions}
+                          value={basePriceId}
+                          onChange={handleBasePriceChange}
+                          placeholder="Selecione um preço para copiar..."
+                          searchPlaceholder="Buscar por SKU, cliente..."
+                        />
+                      </div>
+                    )}
                     <div className="col-span-2">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                         Cliente *
@@ -1466,6 +1584,7 @@ const PricingDashboard = ({ user }) => {
                   onClick={() => {
                     setShowNewPriceModal(false);
                     setEditingId(null);
+                    setBasePriceId('');
                     setNewPriceForm({
                       client_id: '',
                       sku: '',
