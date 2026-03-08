@@ -27,19 +27,26 @@ const Login = ({ setUser }) => {
         return;
       }
       const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password
+        email: formData.email.trim(),
+        password: formData.password.trim()
       });
       if (authError || !data?.user || !data?.session) {
         console.error('Login error:', authError);
-        const msg = (
-          /invalid login credentials/i.test(authError?.message || '') ? 'Credenciais inválidas ou erro de conexão. Verifique seus dados.' :
-          /email not confirmed|not confirmed/i.test(authError?.message || '') ? 'E-mail não confirmado. Verifique seu e-mail e tente novamente.' :
-          /rate limit/i.test(authError?.message || '') ? 'Muitas tentativas. Aguarde um momento.' :
-          /failed to fetch/i.test(authError?.message || '') ? 'Erro de conexão com o servidor. Verifique sua internet.' :
-          authError?.message || 'Não foi possível autenticar'
-        );
-        throw new Error(msg);
+        let errorMsg = 'Não foi possível autenticar';
+        
+        if (/invalid login credentials/i.test(authError?.message || '')) {
+          errorMsg = 'E-mail ou senha incorretos.';
+        } else if (/email not confirmed|not confirmed/i.test(authError?.message || '')) {
+          errorMsg = 'E-mail não confirmado. Verifique seu e-mail.';
+        } else if (/rate limit/i.test(authError?.message || '')) {
+          errorMsg = 'Muitas tentativas. Aguarde um momento.';
+        } else if (/failed to fetch/i.test(authError?.message || '')) {
+          errorMsg = 'Erro de conexão com o servidor. Verifique sua internet.';
+        } else if (authError?.message) {
+          errorMsg = authError.message;
+        }
+        
+        throw new Error(errorMsg);
       }
       setUser(data.user);
       if (formData.rememberMe) {
