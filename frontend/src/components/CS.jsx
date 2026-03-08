@@ -779,10 +779,17 @@ const CS = ({ user }) => {
   }, [modalData.items]);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
+    <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">
+      <Header 
+        user={user} 
+        title="Gestão de Pricing" 
+        subtitle="Dados Business Development" 
+        showBack={false} 
+        logoRedirect="/select"
+      />
       
-      {/* Modal de Detalhes do Gráfico */}
-      {modalData.isOpen && (
+        {/* Modal de Detalhes do Gráfico */}
+        {modalData.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-gray-200 dark:border-gray-800">
             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex flex-col gap-4">
@@ -880,13 +887,6 @@ const CS = ({ user }) => {
           </div>
         </div>
       )}
-      <Header 
-        user={user} 
-        title="Gestão de Pricing" 
-        subtitle="Client Success" 
-        showBack={false} 
-        logoRedirect="/select"
-      />
 
       <div className="max-w-[1600px] mx-auto mt-8 px-6 pb-12">
         

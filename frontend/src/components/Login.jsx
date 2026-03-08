@@ -31,10 +31,12 @@ const Login = ({ setUser }) => {
         password: formData.password
       });
       if (authError || !data?.user || !data?.session) {
+        console.error('Login error:', authError);
         const msg = (
-          /invalid login credentials/i.test(authError?.message || '') ? 'Credenciais inválidas' :
+          /invalid login credentials/i.test(authError?.message || '') ? 'Credenciais inválidas ou erro de conexão. Verifique seus dados.' :
           /email not confirmed|not confirmed/i.test(authError?.message || '') ? 'E-mail não confirmado. Verifique seu e-mail e tente novamente.' :
           /rate limit/i.test(authError?.message || '') ? 'Muitas tentativas. Aguarde um momento.' :
+          /failed to fetch/i.test(authError?.message || '') ? 'Erro de conexão com o servidor. Verifique sua internet.' :
           authError?.message || 'Não foi possível autenticar'
         );
         throw new Error(msg);
@@ -53,7 +55,8 @@ const Login = ({ setUser }) => {
       }
       navigate('/select');
     } catch (err) {
-      setError(err.message || 'Credenciais inválidas');
+      console.error('Login exception:', err);
+      setError(err.message || 'Erro de conexão ou serviço indisponível.');
     } finally {
       setLoading(false);
     }

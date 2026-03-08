@@ -11,6 +11,7 @@ import PricingAnalytics from "./components/PricingAnalytics";
 import SimulationPage from "./components/SimulationPage";
 import PreVendas from "./components/PreVendas";
 import CS from "./components/CS";
+import CatalogoPro from "./components/CatalogoPro";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
 import { Toaster } from "./components/ui/sonner";
@@ -140,13 +141,20 @@ function App() {
             element={user ? <SimulationPage user={user} /> : <Navigate to="/login" />} 
           />
           <Route 
-            path="/pre-vendas/new-leads" 
+            path="/new-business" 
             element={user ? <PreVendas user={user} setUser={setUser} /> : <Navigate to="/login" />} 
           />
           <Route 
-            path="/cs" 
+            path="/business-development" 
             element={user ? <CS user={user} /> : <Navigate to="/login" />} 
           />
+          <Route 
+            path="/catalogo-pro" 
+            element={user ? <CatalogoPro user={user} /> : <Navigate to="/login" />} 
+          />
+          {/* Backwards compatibility or redirects */}
+          <Route path="/pre-vendas/new-leads" element={<Navigate to="/new-business" replace />} />
+          <Route path="/cs" element={<Navigate to="/business-development" replace />} />
           <Route 
             path="/forgot-password" 
             element={<ForgotPassword />} 

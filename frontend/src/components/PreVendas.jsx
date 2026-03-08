@@ -13,7 +13,7 @@ const PreVendas = ({ user, setUser }) => {
       user={user} 
       setUser={setUser} 
       permissions={{ canAdd: canEdit, canEdit: canEdit, canDelete: canEdit }} 
-      title="Dados inside sales" 
+      title="Dados New Business" 
     />
   );
 };

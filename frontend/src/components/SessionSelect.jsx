@@ -7,14 +7,16 @@ const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
   const cards = [
     { key: 'pricing-dashboard', title: 'Pricing', icon: Briefcase, to: '/pricing/dashboard' },
-    { key: 'pre-vendas', title: 'Pré-sales', icon: ClipboardList, to: '/pre-vendas/new-leads' },
-    { key: 'cs', title: 'CS', icon: Users, to: '/cs' },
+    { key: 'pre-vendas', title: 'New Business', icon: ClipboardList, to: '/new-business' },
+    { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
+    { key: 'catalogo-pro', title: 'Catálogo PRO', icon: Calculator, to: '/catalogo-pro' },
   ];
   
   const subtitleFor = (key) => {
     const area = user?.area || user?.user_metadata?.area;
     if (key === 'simulacao') return 'Cálculo e Análise';
+    if (key === 'catalogo-pro') return 'Em desenvolvimento';
     if (area === 'Pricing') return 'Acessar e gerenciar';
     if (area === 'Pré-vendas') return key === 'pre-vendas' ? 'Acessar e gerenciar' : 'Acessar';
     if (area === 'CS') return key === 'cs' ? 'Acessar e gerenciar' : 'Acessar';

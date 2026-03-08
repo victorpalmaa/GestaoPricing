@@ -372,8 +372,8 @@ const SimulationPage = ({ user }) => {
               user_id: user.id,
               user_email: user.email,
               user_name: getUserName(),
-              sku: 'Importado',
-              product_name: `Importação ${version || ''}`.trim(),
+              sku: idSimulacao || 'N/A',
+              product_name: version || `Sem nome`,
               cost: parseNumber(costVal),
               margin: parseNumber(marginVal),
               price: parseNumber(priceNetVal),
@@ -441,7 +441,8 @@ const SimulationPage = ({ user }) => {
         user={user} 
         title="Simulador de Preço e Margem" 
         subtitle="Ferramenta de cálculo e análise de rentabilidade" 
-        showBack={true} 
+        showBack={false}
+        logoRedirect="/select"
       />
       
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
@@ -872,58 +873,61 @@ const SimulationPage = ({ user }) => {
               <CardHeader>
                 <CardTitle className="text-xl flex items-center gap-2">
                   <History className="w-5 h-5 text-gray-500" />
-                  Histórico de Simulações
+                  Histórico de simulações
                 </CardTitle>
-                <CardDescription>
-                  Últimas 50 simulações realizadas
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="overflow-auto max-h-[600px] -mx-6 px-6">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Data</TableHead>
-                        <TableHead>Usuário</TableHead>
-                        <TableHead>Produto/Versão</TableHead>
-                        <TableHead className="text-right">Custo</TableHead>
-                        <TableHead className="text-right">Preço Liq.</TableHead>
+                        <TableHead>ID Simulação</TableHead>
+                        <TableHead>Versão</TableHead>
+                        <TableHead className="text-right">Custo Total</TableHead>
                         <TableHead className="text-right">Margem</TableHead>
+                        <TableHead className="text-right">Preço Liq.</TableHead>
+                        <TableHead className="text-right">Preço Bruto</TableHead>
+                        <TableHead className="text-right">Usuário / Data</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {history.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                             Nenhuma simulação registrada
                           </TableCell>
                         </TableRow>
                       ) : (
                         history.map((item) => (
                           <TableRow key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                            <TableCell className="whitespace-nowrap text-xs">
-                              {format(new Date(item.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                            <TableCell className="whitespace-nowrap text-xs font-mono text-gray-500">
+                              {item.sku && item.sku !== 'Importado' && item.sku !== 'N/A' ? item.sku : item.id.substring(0, 8)}
                             </TableCell>
-                            <TableCell className="text-xs">
-                             <div className="flex flex-col">
-                                <span className="font-medium">{item.user_name || item.user_email?.split('@')[0] || 'Usuário'}</span>
-                                <span className="text-[10px] text-muted-foreground">{item.user_email || 'N/A'}</span>
-                             </div>
-                          </TableCell>
-                            <TableCell className="font-medium text-xs max-w-[150px] truncate" title={item.product_name}>
-                              {item.version ? `Versão: ${item.version}` : item.product_name}
+                            <TableCell className="font-medium text-xs max-w-[200px] truncate" title={item.product_name}>
+                              {item.product_name}
                             </TableCell>
                             <TableCell className="text-right whitespace-nowrap text-xs">
                               {formatCurrency(item.cost)}
-                            </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-xs">
-                              {formatCurrency(item.price)}
                             </TableCell>
                             <TableCell className="text-right whitespace-nowrap text-xs">
                               <Badge variant={item.margin < 10 ? "destructive" : "secondary"} className="text-[10px]">
                                 {formatPercent(item.margin)}
                               </Badge>
                             </TableCell>
+                            <TableCell className="text-right whitespace-nowrap text-xs">
+                              {formatCurrency(item.price)}
+                            </TableCell>
+                            <TableCell className="text-right whitespace-nowrap text-xs">
+                              {item.gross_price ? formatCurrency(item.gross_price) : '-'}
+                            </TableCell>
+                            <TableCell className="text-right text-xs">
+                             <div className="flex flex-col items-end">
+                                <span className="font-medium">{item.user_name || item.user_email?.split('@')[0] || 'Usuário'}</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {format(new Date(item.created_at), "dd/MM/yy HH:mm", { locale: ptBR })}
+                                </span>
+                             </div>
+                          </TableCell>
                           </TableRow>
                         ))
                       )}
