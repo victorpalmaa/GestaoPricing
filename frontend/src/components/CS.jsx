@@ -615,17 +615,34 @@ const CS = ({ user }) => {
 
   const handleUpdateField = async (item, field, value) => {
     try {
-      let updateQuery = supabase.from('pricing_history').update({ [field]: value });
-      
-      // Se for atualização de gestor, aplica para todos os registros desse cliente
-      if (field === 'manager' && item.client_id) {
-         updateQuery = updateQuery.eq('client_id', item.client_id);
-      } else {
-         updateQuery = updateQuery.eq('id', item.id);
+      console.log(`Tentando atualizar ${field} para ${value} no item:`, item);
+
+      // Verificação básica
+      if (!item || !item.id) {
+        throw new Error('Item inválido ou sem ID');
       }
 
-      const { error } = await updateQuery;
-      if (error) throw error;
+      // Preparar query base
+      let query = supabase.from('pricing_history').update({ [field]: value });
+      
+      // Se for atualização de gestor, aplica para todos os registros desse cliente
+      // MAS, cuidado: item.client_id pode não existir se não foi selecionado na query original
+      // Vamos verificar se client_id existe antes de usar
+      if (field === 'manager' && item.client_id) {
+         query = query.eq('client_id', item.client_id);
+      } else {
+         // Fallback seguro: atualizar apenas o registro específico pelo ID
+         query = query.eq('id', item.id);
+      }
+
+      const { data, error } = await query.select(); // Adicionado .select() para confirmar a atualização e ver retorno
+
+      if (error) {
+        console.error('Erro Supabase:', error);
+        throw error;
+      }
+
+      console.log('Atualização bem-sucedida:', data);
       
       toast.success(`${field === 'manager' ? 'Gestor' : 'Gate'} atualizado com sucesso!`);
       
@@ -639,8 +656,8 @@ const CS = ({ user }) => {
       }));
 
     } catch (error) {
-      console.error('Erro ao atualizar:', error);
-      toast.error('Erro ao atualizar dados');
+      console.error('Erro detalhado ao atualizar:', error);
+      toast.error(`Erro ao atualizar dados: ${error.message || 'Erro desconhecido'}`);
     }
   };
 
