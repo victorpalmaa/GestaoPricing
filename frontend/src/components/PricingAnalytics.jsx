@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, cn } from '@/lib/utils';
 import { ArrowLeft, TrendingUp, DollarSign, Users, Package, BarChart3, Calendar, Filter, Search, Check, ChevronsUpDown, X, Scale } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -50,9 +50,11 @@ const PricingAnalytics = ({ user, setUser }) => {
   useEffect(() => {
     const skuParam = searchParams.get('sku');
     const clientParam = searchParams.get('client');
+    const codeParam = searchParams.get('code');
     
     if (clientParam) setSelectedClient(clientParam);
     if (skuParam) setSelectedSKU(skuParam);
+    if (codeParam) setDatasulCode(codeParam);
   }, [searchParams]);
 
   // Realtime Subscription
@@ -192,6 +194,19 @@ const PricingAnalytics = ({ user, setUser }) => {
     return sizes.map(s => ({ label: s, value: s }));
   }, [pricingData]);
 
+  const codeFromSelectedSKU = useMemo(() => {
+    if (!selectedSKU) return '';
+    const matches = (pricingData || []).filter(item => {
+      if (item.sku !== selectedSKU) return false;
+      if (!item.code) return false;
+      if (selectedClient && item.client_id !== selectedClient) return false;
+      return true;
+    });
+
+    const uniqueCodes = [...new Set(matches.map(m => m.code))];
+    return uniqueCodes.length === 1 ? uniqueCodes[0] : '';
+  }, [pricingData, selectedClient, selectedSKU]);
+
   // Filtrar dados localmente com base nas seleções
   const filteredPricingData = useMemo(() => {
     let data = pricingData || [];
@@ -201,7 +216,11 @@ const PricingAnalytics = ({ user, setUser }) => {
     }
 
     if (selectedSKU) {
-      data = data.filter(item => item.sku === selectedSKU);
+      if (codeFromSelectedSKU) {
+        data = data.filter(item => item.code === codeFromSelectedSKU);
+      } else {
+        data = data.filter(item => item.sku === selectedSKU);
+      }
     }
 
     if (selectedCategory) {
@@ -221,7 +240,7 @@ const PricingAnalytics = ({ user, setUser }) => {
     }
     
     return data;
-  }, [pricingData, selectedClient, selectedSKU, selectedCategory, selectedSubcategory, selectedSize, datasulCode]);
+  }, [pricingData, selectedClient, selectedSKU, selectedCategory, selectedSubcategory, selectedSize, datasulCode, codeFromSelectedSKU]);
 
   // Processar dados para gráficos
   const chartData = useMemo(() => {
@@ -367,6 +386,53 @@ const PricingAnalytics = ({ user, setUser }) => {
 
   // Cores para gráficos
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
+
+  const showPointAnnotations = Boolean(selectedSKU);
+
+  const createPointLabelRenderer = (formatValue) => {
+    return ({ x, y, value, index }) => {
+      if (!showPointAnnotations) return null;
+      if (!Array.isArray(chartData?.evolutionData) || chartData.evolutionData.length === 0) return null;
+      if (value === null || value === undefined) return null;
+      if (typeof x !== 'number' || typeof y !== 'number') return null;
+
+      const total = chartData.evolutionData.length;
+      let dx = 0;
+      let textAnchor = 'middle';
+      if (index === 0) {
+        dx = 10;
+        textAnchor = 'start';
+      } else if (index === total - 1) {
+        dx = -10;
+        textAnchor = 'end';
+      }
+
+      const labelY = Math.max(12, y - 10);
+
+      return (
+        <text
+          x={x + dx}
+          y={labelY}
+          fill="#9CA3AF"
+          fontSize={10}
+          fontWeight={500}
+          textAnchor={textAnchor}
+        >
+          {formatValue(value)}
+        </text>
+      );
+    };
+  };
+
+  const renderPricePointLabel = useMemo(
+    () => createPointLabelRenderer((v) => `${chartData.currencySymbol} ${Number(v).toFixed(2)}`),
+    [chartData, showPointAnnotations]
+  );
+
+  const renderMarginPointLabel = useMemo(
+    () => createPointLabelRenderer((v) => `${Number(v).toFixed(1)}%`),
+    [chartData, showPointAnnotations]
+  );
 
   if (loading) {
     return (
@@ -629,7 +695,7 @@ const PricingAnalytics = ({ user, setUser }) => {
             </h3>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData.evolutionData}>
+                <AreaChart data={chartData.evolutionData} margin={{ top: 24, right: 44, left: 36, bottom: 16 }}>
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.3}/>
@@ -647,6 +713,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                     tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     dy={10}
                     interval="preserveStartEnd"
+                    padding={{ left: 10, right: 18 }}
                   />
                   <YAxis 
                     axisLine={false} 
@@ -670,8 +737,16 @@ const PricingAnalytics = ({ user, setUser }) => {
                     fill="url(#colorPrice)" 
                     filter="url(#shadowPrice)"
                     name="Preço"
+                    dot={showPointAnnotations ? { r: 3, strokeWidth: 2, stroke: 'var(--color-primary)', fill: 'var(--color-bg-card)' } : false}
                     activeDot={{ r: 6, strokeWidth: 0 }}
-                  />
+                  >
+                    {showPointAnnotations && (
+                      <LabelList
+                        dataKey="avgPrice"
+                        content={renderPricePointLabel}
+                      />
+                    )}
+                  </Area>
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -685,7 +760,7 @@ const PricingAnalytics = ({ user, setUser }) => {
             </h3>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData.evolutionData}>
+                <AreaChart data={chartData.evolutionData} margin={{ top: 24, right: 44, left: 36, bottom: 16 }}>
                   <defs>
                     <linearGradient id="colorMargin" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
@@ -703,6 +778,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                     tick={{ fill: '#9CA3AF', fontSize: 12 }} 
                     dy={10}
                     interval="preserveStartEnd"
+                    padding={{ left: 10, right: 18 }}
                   />
                   <YAxis 
                     axisLine={false} 
@@ -726,8 +802,16 @@ const PricingAnalytics = ({ user, setUser }) => {
                     fill="url(#colorMargin)" 
                     filter="url(#shadowMargin)"
                     name="Margem"
+                    dot={showPointAnnotations ? { r: 3, strokeWidth: 2, stroke: '#10B981', fill: 'var(--color-bg-card)' } : false}
                     activeDot={{ r: 6, strokeWidth: 0 }}
-                  />
+                  >
+                    {showPointAnnotations && (
+                      <LabelList
+                        dataKey="avgMargin"
+                        content={renderMarginPointLabel}
+                      />
+                    )}
+                  </Area>
                 </AreaChart>
               </ResponsiveContainer>
             </div>

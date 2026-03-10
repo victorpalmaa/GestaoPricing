@@ -19,7 +19,8 @@ import {
   Pencil,
   AlertCircle,
   CheckCircle,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 import Header from './Header';
 import HistoryChartModal from './HistoryChartModal';
@@ -49,6 +50,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { 
   format, 
   addDays, 
@@ -109,6 +120,8 @@ const CS = ({ user }) => {
 
   // Estado para modal de edição
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [observation, setObservation] = useState('');
 
@@ -380,12 +393,36 @@ const CS = ({ user }) => {
     let sortableItems = [...filteredData];
     if (sortConfig.key !== null) {
       sortableItems.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
+        const direction = sortConfig.direction === 'asc' ? 1 : -1;
+        const key = sortConfig.key;
+
+        if (key === 'communicationDate' || key === 'next_validity_date') {
+          const aTime = key === 'communicationDate'
+            ? (a.communicationDate ? new Date(a.communicationDate).getTime() : null)
+            : (a.next_validity_date ? new Date(a.next_validity_date).getTime() : null);
+          const bTime = key === 'communicationDate'
+            ? (b.communicationDate ? new Date(b.communicationDate).getTime() : null)
+            : (b.next_validity_date ? new Date(b.next_validity_date).getTime() : null);
+
+          if (aTime === null && bTime === null) return 0;
+          if (aTime === null) return 1;
+          if (bTime === null) return -1;
+          if (aTime < bTime) return -1 * direction;
+          if (aTime > bTime) return 1 * direction;
+          return 0;
         }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
+
+        const aValue = a[key];
+        const bValue = b[key];
+
+        if (aValue === null || aValue === undefined) return 1;
+        if (bValue === null || bValue === undefined) return -1;
+
+        if (typeof aValue === 'string' && typeof bValue === 'string') {
+          return aValue.localeCompare(bValue, 'pt-BR') * direction;
         }
+        if (aValue < bValue) return -1 * direction;
+        if (aValue > bValue) return 1 * direction;
         return 0;
       });
     }
@@ -393,9 +430,10 @@ const CS = ({ user }) => {
   }, [filteredData, sortConfig]);
 
   const requestSort = (key) => {
-    let direction = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
+    const defaultDirection = (key === 'communicationDate' || key === 'next_validity_date') ? 'desc' : 'asc';
+    let direction = defaultDirection;
+    if (sortConfig.key === key) {
+      direction = sortConfig.direction === 'asc' ? 'desc' : 'asc';
     }
     setSortConfig({ key, direction });
   };
@@ -661,6 +699,30 @@ const CS = ({ user }) => {
     }
   };
 
+  const handleDeleteContract = async (item) => {
+    if (!item || !item.id) return;
+
+    try {
+      const { error } = await supabase
+        .from('pricing_history')
+        .delete()
+        .eq('id', item.id);
+
+      if (error) throw error;
+
+      toast.success('Preço excluído com sucesso!');
+      
+      // Remove do estado local
+      setContracts(prev => prev.filter(c => c.id !== item.id));
+      setDeleteConfirmOpen(false);
+      setItemToDelete(null);
+
+    } catch (error) {
+      console.error('Erro ao excluir:', error);
+      toast.error(`Erro ao excluir: ${error.message || 'Erro desconhecido'}`);
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = [
       'SKU', 'Cliente', 'Gestor', 'Categoria', 'Subcategoria', 
@@ -713,6 +775,12 @@ const CS = ({ user }) => {
     setEditingItem(item);
     setObservation(item.observation || '');
     setIsEditModalOpen(true);
+  };
+
+  const handleDeleteClick = (e, item) => {
+    e.stopPropagation();
+    setItemToDelete(item);
+    setDeleteConfirmOpen(true);
   };
 
   const handleSaveObservation = async () => {
@@ -1670,8 +1738,24 @@ const CS = ({ user }) => {
                   <th className="px-6 py-4 font-semibold">SKU</th>
                   <th className="px-6 py-4 font-semibold text-center">Gate</th>
                   <th className="px-6 py-4 font-semibold">Último Preço</th>
-                  <th className="px-6 py-4 font-semibold">Próx. Comunicação</th>
-                  <th className="px-6 py-4 font-semibold">Próx. Vigência</th>
+                  <th
+                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    onClick={() => requestSort('communicationDate')}
+                  >
+                    Próx. Comunicação
+                    {sortConfig.key === 'communicationDate' && (
+                      <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
+                  <th
+                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    onClick={() => requestSort('next_validity_date')}
+                  >
+                    Próx. Vigência
+                    {sortConfig.key === 'next_validity_date' && (
+                      <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </th>
                   <th 
                     className="px-6 py-4 font-semibold text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
                     onClick={() => requestSort('readjustment_pct')}
@@ -1681,18 +1765,19 @@ const CS = ({ user }) => {
                       <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                     )}
                   </th>
+                  <th className="px-6 py-4 font-semibold text-center w-[50px]">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {loading ? (
                   <tr>
-                    <td colSpan="10" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="11" className="px-6 py-8 text-center text-gray-500">
                       Carregando dados...
                     </td>
                   </tr>
                 ) : filteredData.length === 0 ? (
                   <tr>
-                    <td colSpan="10" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="11" className="px-6 py-8 text-center text-gray-500">
                       Nenhum contrato encontrado.
                     </td>
                   </tr>
@@ -1809,6 +1894,15 @@ const CS = ({ user }) => {
                             {item.readjustment_pct ? item.readjustment_pct.toFixed(2) : '0.00'}%
                         </div>
                       </td>
+                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={(e) => handleDeleteClick(e, item)}
+                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                          title="Excluir preço"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -1824,11 +1918,36 @@ const CS = ({ user }) => {
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
         sku={selectedItem?.sku}
+        code={selectedItem?.code}
         clientId={selectedItem?.client_id}
         clientName={selectedItem?.client_name}
         readjustmentStatus={selectedItem?.readjustment_status}
         onStatusChange={(newStatus) => selectedItem && handleStatusChange(selectedItem, newStatus)}
       />
+
+      {/* Modal de Confirmação de Exclusão */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent className="bg-white dark:bg-[#171717] dark:border-gray-800">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-gray-900 dark:text-white">Você tem certeza?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-500 dark:text-gray-400">
+              Esta ação não pode ser desfeita. Isso excluirá permanentemente o registro de preço para o SKU 
+              <span className="font-semibold text-gray-900 dark:text-white"> {itemToDelete?.sku} </span>
+              do cliente 
+              <span className="font-semibold text-gray-900 dark:text-white"> {itemToDelete?.client_name}</span>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white border-0 hover:bg-gray-200 dark:hover:bg-gray-700">Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => handleDeleteContract(itemToDelete)}
+              className="bg-red-600 text-white hover:bg-red-700 border-0"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Modal de Edição */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>

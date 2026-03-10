@@ -30,34 +30,41 @@ import { supabase } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Percent, DollarSign, Activity } from 'lucide-react';
 import { calculateContractInfo, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
 
-const HistoryChartModal = ({ isOpen, onClose, sku, clientId, clientName, readjustmentStatus, onStatusChange }) => {
+const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, readjustmentStatus, onStatusChange }) => {
   const [data, setData] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
-    if (isOpen && sku && clientId) {
+    if (isOpen && clientId && (code || sku)) {
       loadHistory();
     }
-  }, [isOpen, sku, clientId]);
+  }, [isOpen, sku, code, clientId]);
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
 
   const loadHistory = async () => {
-    if (!clientId || !sku) {
-        console.warn('HistoryChartModal: Missing clientId or sku', { clientId, sku });
+    if (!clientId || (!code && !sku)) {
+        console.warn('HistoryChartModal: Missing clientId or code/sku', { clientId, code, sku });
         return;
     }
 
     try {
       setLoading(true);
-      console.log('HistoryChartModal: Loading history for', { clientId, sku: sku.trim() });
+      console.log('HistoryChartModal: Loading history for', { clientId, code: code?.trim?.(), sku: sku?.trim?.() });
       
-      const { data: historyData, error } = await supabase
+      let query = supabase
         .from('pricing_history')
         .select('*')
         .eq('client_id', clientId)
-        .eq('sku', sku.trim())
         .order('date', { ascending: true });
+
+      if (code) {
+        query = query.eq('code', code.trim());
+      } else {
+        query = query.eq('sku', sku.trim());
+      }
+
+      const { data: historyData, error } = await query;
 
       if (error) throw error;
       

@@ -26,16 +26,21 @@ const Login = ({ setUser }) => {
         setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
         return;
       }
+      const email = formData.email.trim().toLowerCase();
+      const password = formData.password;
       const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: formData.email.trim(),
-        password: formData.password.trim()
+        email,
+        password
       });
       if (authError || !data?.user || !data?.session) {
         console.error('Login error:', authError);
         let errorMsg = 'Não foi possível autenticar';
         
         if (/invalid login credentials/i.test(authError?.message || '')) {
-          errorMsg = 'E-mail ou senha incorretos.';
+          errorMsg = 'E-mail ou senha incorretos (ou usuário não existe neste ambiente).';
+          if (password !== password.trim()) {
+            errorMsg += ' Dica: remova espaços antes/depois da senha.';
+          }
         } else if (/email not confirmed|not confirmed/i.test(authError?.message || '')) {
           errorMsg = 'E-mail não confirmado. Verifique seu e-mail.';
         } else if (/rate limit/i.test(authError?.message || '')) {
