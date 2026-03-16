@@ -28,7 +28,7 @@ import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Percent, DollarSign, Activity } from 'lucide-react';
-import { calculateContractInfo, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
+import { WORKFLOW_STATUS_OPTIONS, filterChangedHistoryPoints } from '../utils/pricingUtils';
 
 const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, readjustmentStatus, onStatusChange }) => {
   const [data, setData] = React.useState([]);
@@ -78,7 +78,8 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
         margin_budget: Number(item.margin_budget || 0)
       }));
 
-      setData(formattedData);
+      const filteredData = filterChangedHistoryPoints(formattedData);
+      setData(filteredData);
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
     } finally {

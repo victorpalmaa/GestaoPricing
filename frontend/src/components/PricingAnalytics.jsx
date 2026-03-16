@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/popover"
 import SearchableSelect from './SearchableSelect';
 import Header from './Header';
+import { filterChangedHistoryPoints } from '../utils/pricingUtils';
 
 const PricingAnalytics = ({ user, setUser }) => {
   const navigate = useNavigate();
@@ -100,7 +101,7 @@ const PricingAnalytics = ({ user, setUser }) => {
         .from('pricing_history')
         .select(`
           *,
-          clients!inner(name)
+          clients(name)
         `)
         .order('date', { ascending: true });
 
@@ -113,7 +114,8 @@ const PricingAnalytics = ({ user, setUser }) => {
 
       // Removidos filtros de cliente/SKU daqui para permitir filtragem dinâmica em memória
       
-      const { data: pricingDataRaw } = await query;
+      const { data: pricingDataRaw, error: pricingError } = await query;
+      if (pricingError) throw pricingError;
       
       // Aplicar lógica de normalização de categorias (mesma do Dashboard)
       const enrichedData = (pricingDataRaw || []).map(item => {
@@ -122,7 +124,7 @@ const PricingAnalytics = ({ user, setUser }) => {
         
         const validCategories = ['Pó', 'Cápsula', 'Gel', 'Pastilha'];
         if (!validCategories.includes(category)) {
-          const checkStr = (subcategory || category || '').toLowerCase();
+          const checkStr = String(subcategory || category || '').toLowerCase();
           
           if (checkStr.includes('creatina') || checkStr.includes('colágeno') || checkStr.includes('glutamina') || checkStr.includes('proteína') || checkStr.includes('whey') || checkStr.includes('pre-workout')) {
              category = 'Pó';
@@ -194,8 +196,8 @@ const PricingAnalytics = ({ user, setUser }) => {
     return sizes.map(s => ({ label: s, value: s }));
   }, [pricingData]);
 
-  const codeFromSelectedSKU = useMemo(() => {
-    if (!selectedSKU) return '';
+  const codesFromSelectedSKU = useMemo(() => {
+    if (!selectedSKU) return [];
     const matches = (pricingData || []).filter(item => {
       if (item.sku !== selectedSKU) return false;
       if (!item.code) return false;
@@ -203,8 +205,7 @@ const PricingAnalytics = ({ user, setUser }) => {
       return true;
     });
 
-    const uniqueCodes = [...new Set(matches.map(m => m.code))];
-    return uniqueCodes.length === 1 ? uniqueCodes[0] : '';
+    return [...new Set(matches.map(m => m.code))];
   }, [pricingData, selectedClient, selectedSKU]);
 
   // Filtrar dados localmente com base nas seleções
@@ -216,8 +217,8 @@ const PricingAnalytics = ({ user, setUser }) => {
     }
 
     if (selectedSKU) {
-      if (codeFromSelectedSKU) {
-        data = data.filter(item => item.code === codeFromSelectedSKU);
+      if (codesFromSelectedSKU.length > 0) {
+        data = data.filter(item => item.code && codesFromSelectedSKU.includes(item.code));
       } else {
         data = data.filter(item => item.sku === selectedSKU);
       }
@@ -240,40 +241,104 @@ const PricingAnalytics = ({ user, setUser }) => {
     }
     
     return data;
-  }, [pricingData, selectedClient, selectedSKU, selectedCategory, selectedSubcategory, selectedSize, datasulCode, codeFromSelectedSKU]);
+  }, [pricingData, selectedClient, selectedSKU, selectedCategory, selectedSubcategory, selectedSize, datasulCode, codesFromSelectedSKU]);
+
+  const parseMonthLabelToDate = (monthLabel) => {
+    if (!monthLabel || typeof monthLabel !== 'string') return null;
+    const normalized = monthLabel.trim().toLowerCase();
+    const [rawMonth, rawYear] = normalized.split('/');
+    if (!rawMonth || !rawYear) return null;
+
+    const monthMap = {
+      jan: 0,
+      fev: 1,
+      mar: 2,
+      abr: 3,
+      mai: 4,
+      jun: 5,
+      jul: 6,
+      ago: 7,
+      set: 8,
+      sep: 8,
+      out: 9,
+      nov: 10,
+      dez: 11
+    };
+
+    const monthIndex = monthMap[rawMonth.slice(0, 3)];
+    if (monthIndex === undefined) return null;
+
+    const parsedYear = Number(rawYear);
+    if (Number.isNaN(parsedYear)) return null;
+
+    const year = rawYear.length === 2 ? 2000 + parsedYear : parsedYear;
+    return new Date(year, monthIndex, 1);
+  };
 
   // Processar dados para gráficos
   const chartData = useMemo(() => {
     const safePricingData = filteredPricingData;
     
-    // Evolução de preços e margem por dia
-    const dailyData = {};
+    // Evolução de preços e margem por mês (coluna "month"/"Mês")
+    const monthlyData = {};
     safePricingData.forEach(item => {
-      const date = item.date;
-      if (!dailyData[date]) {
-        dailyData[date] = { date, totalPrice: 0, totalGrossPrice: 0, totalMargin: 0, count: 0, prices: [] };
+      const monthLabel = (item.month && String(item.month).trim())
+        || (item.date ? format(new Date(`${item.date}T12:00:00`), 'MMM/yy', { locale: ptBR }) : '');
+
+      if (!monthLabel) return;
+
+      if (!monthlyData[monthLabel]) {
+        monthlyData[monthLabel] = {
+          month: monthLabel,
+          totalPrice: 0,
+          totalGrossPrice: 0,
+          totalMargin: 0,
+          count: 0,
+          sortDate: null
+        };
       }
+
       const netPrice = Number(item.net_price || 0);
       const grossPrice = Number(item.gross_price || 0);
       const margin = Number(item.margin_budget || 0);
       
-      dailyData[date].totalPrice += netPrice;
-      dailyData[date].totalGrossPrice += grossPrice;
-      dailyData[date].totalMargin += margin;
-      dailyData[date].count += 1;
-      dailyData[date].prices.push(netPrice);
+      monthlyData[monthLabel].totalPrice += netPrice;
+      monthlyData[monthLabel].totalGrossPrice += grossPrice;
+      monthlyData[monthLabel].totalMargin += margin;
+      monthlyData[monthLabel].count += 1;
+
+      const monthSortDate = item.date
+        ? new Date(`${item.date}T12:00:00`)
+        : parseMonthLabelToDate(monthLabel);
+
+      if (
+        monthSortDate instanceof Date
+        && !Number.isNaN(monthSortDate.getTime())
+        && (!monthlyData[monthLabel].sortDate || monthSortDate < monthlyData[monthLabel].sortDate)
+      ) {
+        monthlyData[monthLabel].sortDate = monthSortDate;
+      }
     });
 
-    const evolutionData = Object.values(dailyData)
-      .map(day => ({
-        date: day.date,
-        formattedDate: format(new Date(day.date), 'MMM/yy', { locale: ptBR }),
-        avgPrice: day.count > 0 ? parseFloat((day.totalGrossPrice / day.count).toFixed(2)) : 0,
-        avgMargin: day.count > 0 ? parseFloat((day.totalMargin / day.count).toFixed(1)) : 0,
-        totalPrice: parseFloat(day.totalPrice.toFixed(2)),
-        count: day.count
+    const evolutionData = Object.values(monthlyData)
+      .map(monthItem => ({
+        month: monthItem.month,
+        avgPrice: monthItem.count > 0 ? parseFloat((monthItem.totalGrossPrice / monthItem.count).toFixed(2)) : 0,
+        avgMargin: monthItem.count > 0 ? parseFloat((monthItem.totalMargin / monthItem.count).toFixed(1)) : 0,
+        totalPrice: parseFloat(monthItem.totalPrice.toFixed(2)),
+        count: monthItem.count,
+        sortDate: monthItem.sortDate || parseMonthLabelToDate(monthItem.month)
       }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+      .sort((a, b) => {
+        const aTime = a.sortDate instanceof Date && !Number.isNaN(a.sortDate.getTime()) ? a.sortDate.getTime() : 0;
+        const bTime = b.sortDate instanceof Date && !Number.isNaN(b.sortDate.getTime()) ? b.sortDate.getTime() : 0;
+        return aTime - bTime;
+      });
+    const filteredEvolutionData = filterChangedHistoryPoints(evolutionData, {
+      dateField: 'sortDate',
+      priceField: 'avgPrice',
+      marginField: 'avgMargin'
+    });
 
     // Distribuição por cliente
     const clientData = {};
@@ -317,12 +382,9 @@ const PricingAnalytics = ({ user, setUser }) => {
       .slice(0, 10);
 
     // Margem por período
-    const marginData = Object.values(dailyData).map(day => ({
-      date: format(new Date(day.date), 'MMM/yy', { locale: ptBR }),
-      avgMargin: day.count > 0 ? parseFloat((day.prices.reduce((sum, price, i) => {
-        const item = safePricingData.find(item => item.date === day.date && item.net_price === price);
-        return sum + (item?.margin_budget || 0);
-      }, 0) / day.count).toFixed(1)) : 0
+    const marginData = filteredEvolutionData.map(monthItem => ({
+      date: monthItem.month,
+      avgMargin: monthItem.avgMargin
     }));
 
     // Determinar moeda principal (baseada na maioria ou no primeiro item)
@@ -366,7 +428,7 @@ const PricingAnalytics = ({ user, setUser }) => {
     }
 
     return {
-      evolutionData,
+      evolutionData: filteredEvolutionData,
       topClients,
       topSKUs,
       marginData,
@@ -375,7 +437,7 @@ const PricingAnalytics = ({ user, setUser }) => {
       // Use pricingData (unfiltered by local filters) for global counts within the loaded date range
       totalSKUs: new Set(pricingData.map(item => item.code).filter(Boolean)).size,
       totalClients: new Set(pricingData.map(item => item.client_id)).size,
-      lastPriceDate: safePricingData.length > 0 ? format(new Date(Math.max(...safePricingData.map(d => new Date(d.date + 'T12:00:00')))), 'MMM/yy', { locale: ptBR }) : '-',
+      lastPriceDate: filteredEvolutionData.length > 0 ? filteredEvolutionData[filteredEvolutionData.length - 1].month : '-',
       avgPrice: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.gross_price || 0), 0) / safePricingData.length).toFixed(2) : 0,
       avgMargin: safePricingData.length > 0 ? (safePricingData.reduce((sum, item) => sum + Number(item.margin_budget || 0), 0) / safePricingData.length).toFixed(1) : 0,
       currencySymbol,
@@ -707,7 +769,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={false} strokeOpacity={0} />
                   <XAxis 
-                    dataKey="formattedDate" 
+                    dataKey="month" 
                     axisLine={false} 
                     tickLine={false} 
                     tick={{ fill: '#9CA3AF', fontSize: 12 }} 
@@ -772,7 +834,7 @@ const PricingAnalytics = ({ user, setUser }) => {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={false} strokeOpacity={0} />
                   <XAxis 
-                    dataKey="formattedDate" 
+                    dataKey="month" 
                     axisLine={false} 
                     tickLine={false} 
                     tick={{ fill: '#9CA3AF', fontSize: 12 }} 

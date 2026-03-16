@@ -78,7 +78,7 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
-import { calculateContractInfo, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
+import { calculateContractInfo, calculateGate, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
 import { 
   XAxis, 
   YAxis, 
@@ -124,6 +124,13 @@ const CS = ({ user }) => {
   const [itemToDelete, setItemToDelete] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [observation, setObservation] = useState('');
+  const [dateEditModal, setDateEditModal] = useState({
+    open: false,
+    item: null,
+    field: null,
+    value: ''
+  });
+  const [savingDateEdit, setSavingDateEdit] = useState(false);
 
   // Realtime Subscription
   useEffect(() => {
@@ -172,31 +179,63 @@ const CS = ({ user }) => {
 
       if (error) throw error;
 
-      // Agrupar por Cliente+SKU para cálculo de reajuste
+      const parsePricingDate = (value) => {
+        if (!value) return null;
+        const raw = value instanceof Date ? value.toISOString() : value.toString();
+        const parsed = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      };
+
+      const comparePricingRows = (a, b) => {
+        const bDate = parsePricingDate(b.date);
+        const aDate = parsePricingDate(a.date);
+        const dateDiff = (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
+        if (dateDiff !== 0) return dateDiff;
+
+        const bUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        const aUpdated = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        if (bUpdated !== aUpdated) return bUpdated - aUpdated;
+
+        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+        if (bCreated !== aCreated) return bCreated - aCreated;
+
+        return String(b.id).localeCompare(String(a.id));
+      };
+
       const groups = {};
+      const codeGroups = {};
       
       data.forEach(item => {
         if (!item.date || !item.sku) return;
-        
-        const key = `${item.client_id}-${item.sku}`;
+        const skuKey = item.sku.toString().trim().toUpperCase();
+        const key = `${item.client_id}-${skuKey}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(item);
+
+        if (item.code) {
+          const codeKey = `${item.client_id}-${item.code.toString().trim()}`;
+          if (!codeGroups[codeKey]) codeGroups[codeKey] = [];
+          codeGroups[codeKey].push(item);
+        }
       });
 
-      // Processar cada grupo para encontrar atual, anterior e calcular % reajuste
       const processedContracts = Object.values(groups).map(group => {
-        // Ordenar por data decrescente (mais recente primeiro)
-        group.sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        const current = group[0];
-        const previous = group[1]; // Pode ser undefined se só houver 1 registro
+        const sortedGroup = [...group].sort(comparePricingRows);
+        const current = sortedGroup[0];
+        const previous = sortedGroup[1];
+        const codeKey = `${current.client_id}-${(current.code || '').toString().trim()}`;
+        const sortedCodeGroup = codeGroups[codeKey] ? [...codeGroups[codeKey]].sort(comparePricingRows) : [];
+        const currentCodeIndex = sortedCodeGroup.findIndex(row => row.id === current.id);
+        const previousByCode = currentCodeIndex >= 0 ? sortedCodeGroup[currentCodeIndex + 1] : null;
+        const referencePrevious = previousByCode || previous;
 
         // Calcular % Reajuste
         let readjustment_pct = 0;
         let previous_price = null;
 
-        if (previous && Number(previous.gross_price) > 0) {
-           previous_price = Number(previous.gross_price);
+        if (referencePrevious && Number(referencePrevious.gross_price) > 0) {
+           previous_price = Number(referencePrevious.gross_price);
            const current_price = Number(current.gross_price);
            readjustment_pct = ((current_price - previous_price) / previous_price) * 100;
         }
@@ -806,6 +845,80 @@ const CS = ({ user }) => {
     } catch (error) {
       console.error('Erro ao salvar observação:', error);
       toast.error('Erro ao salvar observação');
+    }
+  };
+
+  const handleOpenDateEdit = (event, item, field) => {
+    event.stopPropagation();
+    if (!isPricingUser) return;
+
+    const currentValue = field === 'communicationDate' ? item.communicationDate : item.next_validity_date;
+    const normalizedValue = currentValue ? format(new Date(currentValue), 'yyyy-MM-dd') : '';
+
+    setDateEditModal({
+      open: true,
+      item,
+      field,
+      value: normalizedValue
+    });
+  };
+
+  const handleSaveDateEdit = async () => {
+    if (!dateEditModal.item || !dateEditModal.field || !dateEditModal.value) {
+      toast.error('Selecione uma data válida.');
+      return;
+    }
+
+    const selectedDate = parseISO(dateEditModal.value);
+    if (!isValid(selectedDate)) {
+      toast.error('Data inválida.');
+      return;
+    }
+
+    const targetNextValidity = dateEditModal.field === 'communicationDate'
+      ? addDays(selectedDate, 30)
+      : selectedDate;
+
+    const fallbackBaseDate = new Date();
+    const currentBaseDate = dateEditModal.item.date
+      ? new Date(`${dateEditModal.item.date}T12:00:00`)
+      : fallbackBaseDate;
+    const safeBaseDate = isValid(currentBaseDate) ? currentBaseDate : fallbackBaseDate;
+
+    const updatedBaseDate = new Date(safeBaseDate);
+    updatedBaseDate.setMonth(targetNextValidity.getMonth(), targetNextValidity.getDate());
+
+    if (!isValid(updatedBaseDate)) {
+      toast.error('Não foi possível aplicar a data selecionada.');
+      return;
+    }
+
+    const payload = {
+      date: format(updatedBaseDate, 'yyyy-MM-dd'),
+      month: format(updatedBaseDate, 'MMM/yy', { locale: ptBR }),
+      gate: calculateGate(updatedBaseDate.getMonth())
+    };
+
+    try {
+      setSavingDateEdit(true);
+      const { error } = await supabase
+        .from('pricing_history')
+        .update(payload)
+        .eq('id', dateEditModal.item.id);
+
+      if (error) throw error;
+
+      setContracts(prev => prev.map(contract => (
+        contract.id === dateEditModal.item.id ? { ...contract, ...payload } : contract
+      )));
+
+      toast.success('Data atualizada com sucesso.');
+      setDateEditModal({ open: false, item: null, field: null, value: '' });
+    } catch (error) {
+      console.error('Erro ao atualizar data:', error);
+      toast.error('Erro ao atualizar data.');
+    } finally {
+      setSavingDateEdit(false);
     }
   };
 
@@ -1729,7 +1842,7 @@ const CS = ({ user }) => {
           <div className="bg-white dark:bg-[#0a0a0a] rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+              <thead className="sticky top-0 z-20 text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/95 border-b border-gray-100 dark:border-gray-800">
                 <tr>
                   <th className="px-6 py-4 font-semibold text-center w-[180px]">Status do Reajuste</th>
                   <th className="px-6 py-4 font-semibold">Cliente</th>
@@ -1877,11 +1990,29 @@ const CS = ({ user }) => {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
-                        {item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'}
+                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                        {isPricingUser ? (
+                          <button
+                            onClick={(e) => handleOpenDateEdit(e, item, 'communicationDate')}
+                            className="inline-flex items-center rounded px-2 py-1 -mx-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                          >
+                            {item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'}
+                          </button>
+                        ) : (
+                          item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'
+                        )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
-                        {item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'}
+                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                        {isPricingUser ? (
+                          <button
+                            onClick={(e) => handleOpenDateEdit(e, item, 'next_validity_date')}
+                            className="inline-flex items-center rounded px-2 py-1 -mx-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                          >
+                            {item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'}
+                          </button>
+                        ) : (
+                          item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right font-medium">
                         <div className={`flex items-center justify-end gap-1 ${
@@ -1924,6 +2055,53 @@ const CS = ({ user }) => {
         readjustmentStatus={selectedItem?.readjustment_status}
         onStatusChange={(newStatus) => selectedItem && handleStatusChange(selectedItem, newStatus)}
       />
+
+      <Dialog
+        open={dateEditModal.open}
+        onOpenChange={(open) => {
+          if (savingDateEdit) return;
+          if (!open) {
+            setDateEditModal({ open: false, item: null, field: null, value: '' });
+          } else {
+            setDateEditModal(prev => ({ ...prev, open: true }));
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px] bg-white dark:bg-[#171717] dark:border-gray-800">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 dark:text-white">
+              Editar {dateEditModal.field === 'communicationDate' ? 'Próx. Comunicação' : 'Próx. Vigência'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {dateEditModal.item?.client_name} - {dateEditModal.item?.sku}
+            </p>
+            <input
+              type="date"
+              value={dateEditModal.value}
+              onChange={(e) => setDateEditModal(prev => ({ ...prev, value: e.target.value }))}
+              className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-transparent px-3 py-2 text-sm text-gray-900 dark:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950"
+            />
+          </div>
+          <DialogFooter>
+            <button
+              onClick={() => setDateEditModal({ open: false, item: null, field: null, value: '' })}
+              disabled={savingDateEdit}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-700 h-10 px-4 py-2 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSaveDateEdit}
+              disabled={savingDateEdit || !dateEditModal.value}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 h-10 px-4 py-2 disabled:opacity-50"
+            >
+              {savingDateEdit ? 'Salvando...' : 'Salvar'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Confirmação de Exclusão */}
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>

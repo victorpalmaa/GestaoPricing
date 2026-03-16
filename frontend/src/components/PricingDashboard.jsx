@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, cn } from '@/lib/utils';
-import { format, subDays } from 'date-fns';
+import { addDays, format, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -105,6 +105,7 @@ const PricingDashboard = ({ user }) => {
   const [editingId, setEditingId] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
+  const [togglingVigencyId, setTogglingVigencyId] = useState(null);
 
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
@@ -113,7 +114,32 @@ const PricingDashboard = ({ user }) => {
   const isSuper = userArea === 'Pricing';
   const canEdit = isSuper || userArea === 'Pricing';
 
-  // Garantir que os dados estejam inicializados corretamente
+  const parsePricingDate = (value) => {
+    if (!value) return null;
+    const raw = value instanceof Date ? value.toISOString() : value.toString();
+    const parsed = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const getGroupKey = (clientId, sku) => `${clientId}::${(sku || '').toString().trim().toUpperCase()}`;
+
+  const comparePricingRows = (a, b) => {
+    const bDate = parsePricingDate(b.date);
+    const aDate = parsePricingDate(a.date);
+    const dateDiff = (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
+    if (dateDiff !== 0) return dateDiff;
+
+    const bUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    const aUpdated = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    if (bUpdated !== aUpdated) return bUpdated - aUpdated;
+
+    const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+    const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+    if (bCreated !== aCreated) return bCreated - aCreated;
+
+    return String(b.id).localeCompare(String(a.id));
+  };
+
   const safePricingData = pricingData || [];
   const safeClients = clients || [];
 
@@ -237,7 +263,7 @@ const PricingDashboard = ({ user }) => {
         .from('pricing_history')
         .select(`
           *,
-          clients!inner(name)
+          clients(name)
         `)
         .order('date', { ascending: false });
 
@@ -253,13 +279,20 @@ const PricingDashboard = ({ user }) => {
 
       if (pricingError) throw pricingError;
 
-      // Calcular vigência (mais recente por Cliente + SKU)
-      const latestMap = new Map();
+      const groupedRows = new Map();
       (pricingDataRaw || []).forEach(item => {
-        const key = `${item.client_id}-${item.sku}`;
-        const existingDate = latestMap.get(key);
-        if (!existingDate || new Date(item.date) > new Date(existingDate)) {
-          latestMap.set(key, item.date);
+        const key = getGroupKey(item.client_id, item.sku);
+        if (!groupedRows.has(key)) {
+          groupedRows.set(key, []);
+        }
+        groupedRows.get(key).push(item);
+      });
+
+      const currentIdMap = new Map();
+      groupedRows.forEach((rows, key) => {
+        const sortedRows = [...rows].sort(comparePricingRows);
+        if (sortedRows[0]?.id) {
+          currentIdMap.set(key, sortedRows[0].id);
         }
       });
 
@@ -286,7 +319,7 @@ const PricingDashboard = ({ user }) => {
         // Se a categoria não for uma das padrão, tentar derivar
         const validCategories = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
         if (!validCategories.includes(category)) {
-          const checkStr = (subcategory || category || '').toLowerCase();
+          const checkStr = String(subcategory || category || '').toLowerCase();
           
           if (checkStr.includes('creatina') || checkStr.includes('colágeno') || checkStr.includes('glutamina') || checkStr.includes('proteína') || checkStr.includes('whey') || checkStr.includes('pre-workout')) {
              category = 'Pó';
@@ -315,7 +348,7 @@ const PricingDashboard = ({ user }) => {
           category,
           subcategory,
           month,
-          isCurrent: item.date === latestMap.get(`${item.client_id}-${item.sku}`)
+          isCurrent: item.id === currentIdMap.get(getGroupKey(item.client_id, item.sku))
         };
       });
 
@@ -636,7 +669,7 @@ const PricingDashboard = ({ user }) => {
 
             processedData.push({
               client_id: clientId,
-              sku: sku,
+              sku: sku.toUpperCase(),
               net_price: netPrice,
               gross_price: isNaN(grossPrice) ? null : grossPrice,
               margin_budget: isNaN(marginBudget) ? null : marginBudget,
@@ -714,7 +747,7 @@ const PricingDashboard = ({ user }) => {
     try {
       const priceData = {
         client_id: newPriceForm.client_id,
-        sku: newPriceForm.sku.trim(),
+        sku: newPriceForm.sku.trim().toUpperCase(),
         net_price: netPrice,
         gross_price: grossPrice,
         margin_budget: marginBudget,
@@ -750,17 +783,56 @@ const PricingDashboard = ({ user }) => {
         })
       };
 
+      const { data: sameSkuRows, error: sameSkuError } = await supabase
+        .from('pricing_history')
+        .select('id, sku, date, client_id, created_at, updated_at')
+        .eq('client_id', priceData.client_id)
+        .eq('sku', priceData.sku);
+
+      if (sameSkuError) throw sameSkuError;
+
+      const comparableRows = (sameSkuRows || []).filter(row => row.id !== editingId);
+      const sortedComparableRows = comparableRows.sort((a, b) => {
+        const bDate = new Date(`${b.date}T12:00:00`).getTime();
+        const aDate = new Date(`${a.date}T12:00:00`).getTime();
+        if (bDate !== aDate) return bDate - aDate;
+
+        const bUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        const aUpdated = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        if (bUpdated !== aUpdated) return bUpdated - aUpdated;
+
+        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+        if (bCreated !== aCreated) return bCreated - aCreated;
+
+        return String(b.id).localeCompare(String(a.id));
+      });
+
+      const originalItem = editingId ? pricingData.find(item => item.id === editingId) : null;
+      const skuChanged = Boolean(originalItem && originalItem.sku?.trim().toUpperCase() !== priceData.sku);
+      const latestConflict = sortedComparableRows[0];
+
+      if (latestConflict) {
+        if (skuChanged) {
+          toast.warning('Este SKU já possui preço vigente para este cliente. O registro salvo poderá ficar como histórico.');
+        }
+
+        const latestDate = new Date(`${latestConflict.date}T12:00:00`).getTime();
+        const newDate = new Date(`${priceData.date}T12:00:00`).getTime();
+        if (newDate <= latestDate) {
+          toast.warning('Já existe preço vigente mais recente para este SKU e cliente. Um SKU não pode ter dois preços vigentes.');
+        }
+      }
+
       let error;
       
       if (editingId) {
-        // Atualizar existente
         const { error: updateError } = await supabase
           .from('pricing_history')
           .update(priceData)
           .eq('id', editingId);
         error = updateError;
       } else {
-        // Inserir novo
         const { error: insertError } = await supabase
           .from('pricing_history')
           .insert(priceData);
@@ -845,6 +917,79 @@ const PricingDashboard = ({ user }) => {
     } catch (error) {
       console.error('Erro ao excluir:', error);
       toast.error('Erro ao excluir registro');
+    }
+  };
+
+  const handleToggleVigency = async (item) => {
+    if (!item?.id) return;
+
+    try {
+      setTogglingVigencyId(item.id);
+
+      const { data: clientRows, error } = await supabase
+        .from('pricing_history')
+        .select('*')
+        .eq('client_id', item.client_id);
+
+      if (error) throw error;
+
+      const normalizedSku = (item.sku || '').toString().trim().toUpperCase();
+      const skuRows = (clientRows || []).filter(
+        row => (row.sku || '').toString().trim().toUpperCase() === normalizedSku
+      );
+      const sortedRows = [...skuRows].sort(comparePricingRows);
+
+      if (sortedRows.length === 0) {
+        toast.error('Não foi possível localizar o histórico deste SKU para o cliente selecionado.');
+        return;
+      }
+
+      if (item.isCurrent) {
+        const nextCurrent = sortedRows.find(row => row.id !== item.id);
+        if (!nextCurrent) {
+          toast.warning('Não é possível remover o único preço vigente deste SKU.');
+          return;
+        }
+
+        const targetDate = subDays(parsePricingDate(nextCurrent.date) || new Date(), 1);
+        const { error: updateError } = await supabase
+          .from('pricing_history')
+          .update({
+            date: targetDate.toISOString().split('T')[0],
+            month: format(targetDate, 'MMM/yy', { locale: ptBR }),
+            gate: calculateGate(targetDate.getMonth())
+          })
+          .eq('id', item.id);
+
+        if (updateError) throw updateError;
+        toast.success('Preço movido para histórico com sucesso.');
+      } else {
+        const currentRow = sortedRows[0];
+        const targetDate = addDays(parsePricingDate(currentRow?.date) || new Date(), 1);
+
+        const { error: updateError } = await supabase
+          .from('pricing_history')
+          .update({
+            date: targetDate.toISOString().split('T')[0],
+            month: format(targetDate, 'MMM/yy', { locale: ptBR }),
+            gate: calculateGate(targetDate.getMonth())
+          })
+          .eq('id', item.id);
+
+        if (updateError) throw updateError;
+        toast.success('Preço marcado como vigente com sucesso.');
+      }
+
+      loadData();
+    } catch (error) {
+      console.error('Erro ao alternar vigência:', error);
+      if (error?.message?.toLowerCase()?.includes('row-level security')) {
+        toast.error('Seu usuário não possui permissão para alterar vigência deste preço.');
+        return;
+      }
+      toast.error('Erro ao alternar vigência.');
+    } finally {
+      setTogglingVigencyId(null);
     }
   };
 
@@ -1266,11 +1411,18 @@ const PricingDashboard = ({ user }) => {
                           {(Number(item.margin_budget) || 0).toFixed(1)}%
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                          {item.isCurrent ? (
-                            <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
-                          )}
+                          <button
+                            onClick={() => handleToggleVigency(item)}
+                            disabled={togglingVigencyId === item.id}
+                            className={cn('inline-flex rounded-md transition-opacity', togglingVigencyId === item.id && 'opacity-70 cursor-wait')}
+                            title="Clique para alternar vigência"
+                          >
+                            {item.isCurrent ? (
+                              <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
+                            )}
+                          </button>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.month || '-'}

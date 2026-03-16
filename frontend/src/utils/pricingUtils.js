@@ -101,3 +101,53 @@ export const WORKFLOW_STATUS_OPTIONS = [
   { value: 'Aprovado', label: 'Aprovado', color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800' },
   { value: 'Implementado', label: 'Implementado', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 border-purple-200 dark:border-purple-800' }
 ];
+
+export const filterChangedHistoryPoints = (rows, options = {}) => {
+  const {
+    dateField = 'date',
+    priceField = 'gross_price',
+    marginField = 'margin_budget',
+    epsilon = 0.0001
+  } = options;
+
+  const parseDate = (value) => {
+    if (!value) return null;
+    const parsed = value instanceof Date
+      ? new Date(value.getTime())
+      : new Date(value.toString().includes('T') ? value : `${value}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const sortedRows = [...(rows || [])].sort((a, b) => {
+    const aTime = parseDate(a?.[dateField])?.getTime() || 0;
+    const bTime = parseDate(b?.[dateField])?.getTime() || 0;
+    return aTime - bTime;
+  });
+
+  const changedRows = [];
+  let lastPrice = null;
+  let lastMargin = null;
+
+  sortedRows.forEach((row) => {
+    const price = Number(row?.[priceField] || 0);
+    const margin = Number(row?.[marginField] || 0);
+
+    if (changedRows.length === 0) {
+      changedRows.push(row);
+      lastPrice = price;
+      lastMargin = margin;
+      return;
+    }
+
+    const priceChanged = Math.abs(price - lastPrice) > epsilon;
+    const marginChanged = Math.abs(margin - lastMargin) > epsilon;
+
+    if (priceChanged || marginChanged) {
+      changedRows.push(row);
+      lastPrice = price;
+      lastMargin = margin;
+    }
+  });
+
+  return changedRows;
+};

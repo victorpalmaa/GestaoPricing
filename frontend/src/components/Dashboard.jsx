@@ -528,6 +528,27 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     XLSX.writeFile(wb, "pre-vendas.xlsx");
   };
 
+  const metricsByOrigin = useMemo(() => {
+    const novosClientesRows = filteredLeads.filter(l => l.originType === 'novo_cliente');
+    const novosSkusBaseRows = filteredLeads.filter(l => l.originType === 'novo_sku');
+
+    const novosClientesProjetos = novosClientesRows.length;
+    const novosSkusBaseProjetos = novosSkusBaseRows.length;
+    const novosClientesUnicos = new Set(novosClientesRows.map(l => l.cliente).filter(Boolean)).size;
+    const novosSkusBaseUnicos = new Set(novosSkusBaseRows.map(l => l.sku).filter(Boolean)).size;
+    const relacaoProjetos = novosSkusBaseProjetos > 0
+      ? (novosClientesProjetos / novosSkusBaseProjetos).toFixed(2)
+      : '-';
+
+    return {
+      novosClientesProjetos,
+      novosSkusBaseProjetos,
+      novosClientesUnicos,
+      novosSkusBaseUnicos,
+      relacaoProjetos
+    };
+  }, [filteredLeads]);
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#171717] transition-colors duration-200">
       {/* Header */}
@@ -611,46 +632,47 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+        {showMoreMetrics && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-4">
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   Total de Clientes Únicos
                 </p>
-                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   {new Set(filteredLeads.map(l => l.cliente)).size}
                 </p>
               </div>
-              <div className="p-3 rounded-lg bg-primary/10 text-primary">
-                <BarChart3 size={24} />
+              <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
+                <BarChart3 size={20} />
               </div>
             </div>
           </div>
 
-          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   ROB Estimado
                 </p>
-                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   R$ {(filteredLeads.reduce((acc, lead) => acc + (lead.precoBruto * lead.volume), 0) / 1000).toFixed(1)}k
                 </p>
               </div>
-              <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
-                <DollarSign size={24} />
+              <div className="p-2.5 rounded-lg bg-green-500/10 text-green-500">
+                <DollarSign size={20} />
               </div>
             </div>
           </div>
 
-          <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   Taxa de Assertividade
                 </p>
-                <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                   {(() => {
                     const aprovados = filteredLeads.filter(l => l.status === 'aprovado').length;
                     const reprovados = filteredLeads.filter(l => l.status === 'reprovado').length;
@@ -659,22 +681,77 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   })()}%
                 </p>
               </div>
-              <div className="p-3 rounded-lg bg-blue-500/10 text-blue-500">
-                <TrendingUp size={24} />
+              <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-500">
+                <TrendingUp size={20} />
+              </div>
+            </div>
+          </div>
+
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Novos clientes (projetos)
+                </p>
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  {metricsByOrigin.novosClientesProjetos}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {metricsByOrigin.novosClientesUnicos} clientes únicos
+                </p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-500">
+                <CheckCircle size={20} />
+              </div>
+            </div>
+          </div>
+
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Novos SKUs base (projetos)
+                </p>
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  {metricsByOrigin.novosSkusBaseProjetos}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {metricsByOrigin.novosSkusBaseUnicos} SKUs únicos
+                </p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-purple-500/10 text-purple-500">
+                <Package size={20} />
+              </div>
+            </div>
+          </div>
+
+          <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Relação novos clientes/SKUs base
+                </p>
+                <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  {metricsByOrigin.relacaoProjetos}
+                </p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-cyan-500/10 text-cyan-500">
+                <Activity size={20} />
               </div>
             </div>
           </div>
         </div>
+        )}
 
         {showMoreMetrics && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   Leads Aprovados
                   </p>
-                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     R$ {( 
                       filteredLeads
                         .filter(l => l.status === 'aprovado')
@@ -682,58 +759,58 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                     ).toFixed(1)}k
                   </p>
                 </div>
-                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
-                  <DollarSign size={24} />
+                <div className="p-2.5 rounded-lg bg-green-500/10 text-green-500">
+                  <DollarSign size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     MB Média
                   </p>
-                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     {filteredLeads.length > 0 
                       ? (filteredLeads.reduce((acc, lead) => acc + lead.margemBruta, 0) / filteredLeads.length).toFixed(1)
                       : '0'}%
                   </p>
                 </div>
-                <div className="p-3 rounded-lg bg-blue-500/10 text-blue-500">
-                  <TrendingUp size={24} />
+                <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-500">
+                  <TrendingUp size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     ROL Estimado
                   </p>
-                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     R$ {(filteredLeads.reduce((acc, lead) => acc + (lead.precoLiquido * lead.volume), 0) / 1000).toFixed(1)}k
                   </p>
                 </div>
-                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
-                  <DollarSign size={24} />
+                <div className="p-2.5 rounded-lg bg-green-500/10 text-green-500">
+                  <DollarSign size={20} />
                 </div>
               </div>
             </div>
 
-            <div className="card-pronutrition hover-lift p-5 dark:bg-[#0a0a0a] dark:border-gray-800">
+            <div className="card-pronutrition hover-lift p-4 dark:bg-[#0a0a0a] dark:border-gray-800">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Volume Total
                   </p>
-                  <p className="text-2xl font-bold mt-1 text-gray-900 dark:text-gray-100">
+                  <p className="text-xl font-bold mt-1 text-gray-900 dark:text-gray-100">
                     {filteredLeads.reduce((acc, lead) => acc + lead.volume, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
-                <div className="p-3 rounded-lg bg-green-500/10 text-green-500">
-                  <Package size={24} />
+                <div className="p-2.5 rounded-lg bg-green-500/10 text-green-500">
+                  <Package size={20} />
                 </div>
               </div>
             </div>
@@ -1262,7 +1339,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           : 'bg-white dark:bg-[#0a0a0a] text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20'
                       }`}
                     >
-                      Novos SKUs
+                      Novos SKUs base
                     </button>
                   </div>
                 </div>
