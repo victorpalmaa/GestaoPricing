@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Lock, Calculator, ArrowRight, RefreshCcw, TrendingUp, DollarSign, Percent, Upload, History, HelpCircle, Info, Map, Check } from 'lucide-react';
+import { Lock, Calculator, RefreshCcw, TrendingUp, DollarSign, Percent, Upload, History, Info, Map as MapIcon, Check, XCircle, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -20,14 +20,24 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 
 // MOCK DATA for Simulation
-const MOCK_PRODUCTS = [
-  { sku: '100.200.300', name: 'Cimento CP II 50kg', cost: 25.00, margin: 15.0, price_net: 29.41, price_gross: 32.00 },
-  { sku: '100.200.301', name: 'Areia Média 20kg', cost: 12.00, margin: 20.0, price_net: 15.00, price_gross: 16.50 },
-  { sku: '100.200.302', name: 'Tijolo Baiano 6 furos', cost: 0.80, margin: 30.0, price_net: 1.14, price_gross: 1.25 },
-  { sku: '100.200.303', name: 'Tinta Acrílica Branca 18L', cost: 180.00, margin: 25.0, price_net: 240.00, price_gross: 260.00 },
-  { sku: '100.200.304', name: 'Piso Cerâmico 60x60 cx', cost: 45.00, margin: 18.0, price_net: 54.88, price_gross: 60.00 },
+const MOCK_CATALOG_PRODUCTS = [
+  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 1000, catalog_cost: 21.3, catalog_price: 29.9, catalog_gross_price: 33.22, catalog_margin: 28.76 },
+  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 3000, catalog_cost: 20.8, catalog_price: 28.9, catalog_gross_price: 32.11, catalog_margin: 28.03 },
+  { datasul_code: '900001', sku: 'CIMED - Lavitan Colágeno Verisol Hibisco e Limão - Pote 300g', volume: 5000, catalog_cost: 20.1, catalog_price: 27.8, catalog_gross_price: 30.89, catalog_margin: 27.7 },
+  { datasul_code: '900045', sku: 'Calm Gut- Pote 175g', volume: 1000, catalog_cost: 32.5, catalog_price: 43.7, catalog_gross_price: 48.56, catalog_margin: 25.63 },
+  { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 3000, catalog_cost: 31.4, catalog_price: 42.1, catalog_gross_price: 46.78, catalog_margin: 25.42 },
+  { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 5000, catalog_cost: 30.8, catalog_price: 41.4, catalog_gross_price: 46.0, catalog_margin: 25.6 },
 ];
 
 const SimulationPage = ({ user }) => {
@@ -38,115 +48,144 @@ const SimulationPage = ({ user }) => {
   // State from navigation
   const initialState = location.state || {};
   
-  const [selectedProductSku, setSelectedProductSku] = useState(initialState.sku || '');
+  const [selectedProductSku, setSelectedProductSku] = useState(initialState.code || initialState.sku || '');
+  const [selectedVolume, setSelectedVolume] = useState(initialState.volume ? String(initialState.volume) : '');
   const [sku, setSku] = useState(initialState.sku || '');
   const [productName, setProductName] = useState(initialState.productName || '');
   const [cost, setCost] = useState(initialState.initialCost || '');
   const [price, setPrice] = useState(initialState.initialPrice || '');
   const [margin, setMargin] = useState(initialState.initialMargin || '');
-  const [taxFactor, setTaxFactor] = useState(1);
   const [pis, setPis] = useState(1.65);
   const [cofins, setCofins] = useState(7.60);
-  const [icms, setIcms] = useState(18.00);
+  const [icms, setIcms] = useState(12.00);
+  const [comissao, setComissao] = useState(0);
+  const [frete, setFrete] = useState(0);
+  const [encargo, setEncargo] = useState(1.5);
+  const [ipi, setIpi] = useState(0);
   const [grossPrice, setGrossPrice] = useState('');
   const [mode, setMode] = useState('simularMargem'); // 'simularMargem', 'simularPreco' or 'simularPrecoBruto'
+  const [calculationError, setCalculationError] = useState('');
   
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
 
   const [history, setHistory] = useState([]);
+  const [catalogProducts, setCatalogProducts] = useState([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveForm, setSaveForm] = useState({
+    clientName: '',
+    target: '',
+    observations: ''
+  });
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
+  const [showHistoryDetailModal, setShowHistoryDetailModal] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [hasManualInput, setHasManualInput] = useState(false);
+  const [isClosingHistoryDetailModal, setIsClosingHistoryDetailModal] = useState(false);
+  const [decisionEffect, setDecisionEffect] = useState({ visible: false, status: '', tokens: [], logoTokens: [] });
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   
   const userArea = user?.area || user?.user_metadata?.area;
   const isPricingUser = userArea === 'Pricing';
 
-  const [availableSimulations, setAvailableSimulations] = useState([]);
-
-  // Fetch simulations/products from DB
+  // Fetch catalog/products from DB
   useEffect(() => {
-    const fetchSimulations = async () => {
+    const fetchCatalog = async () => {
       try {
         const { data, error } = await supabase
-          .from('simulations_history')
+          .from('simulation_catalog_prices')
           .select('*')
-          .order('created_at', { ascending: false })
-          .limit(500);
+          .order('sku', { ascending: true })
+          .order('volume', { ascending: true });
         
         if (error) throw error;
-        if (data) {
-          setAvailableSimulations(data);
-        }
+        setCatalogProducts(data && data.length > 0 ? data : MOCK_CATALOG_PRODUCTS);
       } catch (err) {
-        console.error('Error fetching simulations:', err);
+        console.error('Error fetching catalog:', err);
+        setCatalogProducts(MOCK_CATALOG_PRODUCTS);
       }
     };
 
-    fetchSimulations();
-  }, [history]); // Reload when history changes (e.g. after import)
+    fetchCatalog();
+  }, [history]);
 
   // Generate options for the select
   const productOptions = useMemo(() => {
-    return availableSimulations.map(p => {
-      // Determine display label based on data quality
-      let label = p.product_name;
-      if (p.sku === 'Importado' || p.sku === 'N/A') {
-        label = p.version || p.product_name || 'Simulação sem nome';
-      } else {
-        label = p.product_name;
+    const grouped = new Map();
+    (catalogProducts || []).forEach(item => {
+      const code = item.datasul_code ? String(item.datasul_code).trim() : '';
+      if (!code) return;
+      if (!grouped.has(code)) {
+        grouped.set(code, { code, skuNames: new Set() });
       }
+      if (item.sku) {
+        grouped.get(code).skuNames.add(item.sku);
+      }
+    });
 
+    return Array.from(grouped.values()).map(item => {
+      const names = Array.from(item.skuNames);
+      const primaryName = names[0] || item.code;
       return {
-        value: p.id, // Using ID as unique identifier
-        label: label,
-        keywords: `${p.product_name} ${p.sku} ${p.version || ''} ${p.id}`
+        value: item.code,
+        label: `${primaryName} (${item.code})`,
+        keywords: `${primaryName} ${item.code} ${names.join(' ')}`
       };
     });
-  }, [availableSimulations]);
+  }, [catalogProducts]);
+
+  const volumeOptions = useMemo(() => {
+    if (!selectedProductSku) {
+      return ['1000', '3000', '5000'];
+    }
+    const volumes = [...new Set(
+      (catalogProducts || [])
+        .filter(item => String(item.datasul_code || '').trim() === String(selectedProductSku).trim())
+        .map(item => String(item.volume || '').trim())
+        .filter(Boolean)
+    )].sort((a, b) => Number(a) - Number(b));
+    return volumes.length > 0 ? volumes : ['1000', '3000', '5000'];
+  }, [catalogProducts, selectedProductSku]);
+
+  const selectedCatalogEntry = useMemo(() => {
+    if (!selectedProductSku || !selectedVolume) return null;
+    return (catalogProducts || []).find(item =>
+      String(item.datasul_code || '').trim() === String(selectedProductSku).trim()
+      && String(item.volume || '').trim() === String(selectedVolume).trim()
+    ) || null;
+  }, [catalogProducts, selectedProductSku, selectedVolume]);
 
   // Handle product selection
-  const handleProductSelect = (selectedId) => {
-    // Check if selectedId matches an ID in availableSimulations
-    let simulation = availableSimulations.find(p => p.id === selectedId);
-    
-    // Fallback: if not found by ID, try finding by SKU (for backward compatibility or external nav)
-    if (!simulation) {
-      simulation = availableSimulations.find(p => p.sku === selectedId);
-    }
-
-    if (simulation) {
-      setSelectedProductSku(selectedId);
-      setSku(simulation.sku || '');
-      setProductName(simulation.product_name || '');
-      
-      // Ensure numeric values are displayed even if 0
-      const formatValue = (val) => {
-        if (val === null || val === undefined || val === '') return '0.00';
-        const num = Number(val);
-        return isNaN(num) ? '0.00' : num.toFixed(2);
-      };
-
-      setCost(formatValue(simulation.cost));
-      setPrice(formatValue(simulation.price));
-      setMargin(formatValue(simulation.margin));
-      
-      // Set Gross Price
-      setGrossPrice(formatValue(simulation.gross_price));
-      
-      // Set Taxes if available
-      setPis(formatValue(simulation.pis ?? 1.65));
-      setCofins(formatValue(simulation.cofins ?? 7.60));
-      setIcms(formatValue(simulation.icms ?? 18.00));
-      
-      // Calculate tax factor
-      const priceVal = Number(simulation.price) || 0;
-      const grossVal = Number(simulation.gross_price) || 0;
-      
-      if (priceVal > 0 && grossVal > 0) {
-        setTaxFactor(grossVal / priceVal);
-      } else {
-        setTaxFactor(1);
-      }
+  const handleProductSelect = (selectedCode) => {
+    setSelectedProductSku(selectedCode);
+    setSelectedVolume('');
+    const firstMatch = (catalogProducts || []).find(item =>
+      String(item.datasul_code || '').trim() === String(selectedCode || '').trim()
+    );
+    if (firstMatch?.sku) {
+      setSku(firstMatch.sku);
+      setProductName(firstMatch.sku);
     }
   };
+
+  useEffect(() => {
+    if (!selectedCatalogEntry) return;
+
+    const formatValue = (val) => {
+      if (val === null || val === undefined || val === '') return '0.00';
+      const num = Number(val);
+      return Number.isNaN(num) ? '0.00' : num.toFixed(2);
+    };
+
+    setSku(selectedCatalogEntry.sku || '');
+    setProductName(selectedCatalogEntry.sku || '');
+    setCost(formatValue(selectedCatalogEntry.catalog_cost));
+    setPrice(formatValue(selectedCatalogEntry.catalog_price));
+    setMargin(formatValue(selectedCatalogEntry.catalog_margin));
+    setGrossPrice(formatValue(selectedCatalogEntry.catalog_gross_price || selectedCatalogEntry.catalog_price));
+    setHasManualInput(false);
+  }, [selectedCatalogEntry]);
 
   // Calculate on change
   useEffect(() => {
@@ -155,7 +194,7 @@ const SimulationPage = ({ user }) => {
     const marginNum = Number(margin) || 0;
 
     calculate(costNum, priceNum, marginNum);
-  }, [price, margin, cost, mode, pis, cofins, icms, grossPrice]);
+  }, [price, margin, cost, mode, pis, cofins, icms, grossPrice, comissao, frete, encargo, ipi]);
 
   // Load history on mount
   useEffect(() => {
@@ -172,7 +211,50 @@ const SimulationPage = ({ user }) => {
         .limit(50);
         
       if (error) throw error;
-      setHistory(data || []);
+      const baseHistory = data || [];
+      const userIds = [...new Set(baseHistory.map(item => item.user_id).filter(Boolean))];
+      const userEmails = [...new Set(baseHistory.map(item => String(item.user_email || '').trim().toLowerCase()).filter(Boolean))];
+
+      let usersById = {};
+      let usersByEmail = {};
+      if (userIds.length > 0 || userEmails.length > 0) {
+        const [usersByIdResult, usersByEmailResult] = await Promise.all([
+          userIds.length > 0
+            ? supabase
+                .from('users')
+                .select('id, nome, email')
+                .in('id', userIds)
+            : Promise.resolve({ data: [] }),
+          userEmails.length > 0
+            ? supabase
+                .from('users')
+                .select('id, nome, email')
+                .in('email', userEmails)
+            : Promise.resolve({ data: [] })
+        ]);
+
+        const usersCombined = [...(usersByIdResult.data || []), ...(usersByEmailResult.data || [])];
+        usersById = usersCombined.reduce((acc, row) => {
+          if (row?.id && row?.nome) acc[row.id] = row.nome;
+          return acc;
+        }, {});
+        usersByEmail = usersCombined.reduce((acc, row) => {
+          const normalizedEmail = String(row?.email || '').trim().toLowerCase();
+          if (normalizedEmail && row?.nome) acc[normalizedEmail] = row.nome;
+          return acc;
+        }, {});
+      }
+
+      const enrichedHistory = baseHistory.map(item => ({
+        ...item,
+        user_name_from_users:
+          usersByEmail[String(item.user_email || '').trim().toLowerCase()] ||
+          usersById[item.user_id] ||
+          item.user_name ||
+          null
+      }));
+
+      setHistory(enrichedHistory);
     } catch (error) {
       console.error('Error loading history:', error);
       toast.error('Erro ao carregar histórico de simulações');
@@ -186,77 +268,172 @@ const SimulationPage = ({ user }) => {
     }
   };
 
-  const calculate = (costNum, priceNum, marginNum) => {
-    if (mode === 'simularMargem') {
-      // Logic changed: User inputs Gross Price, system calculates Net Price and Margin
-      // Formula: Net Price = Gross Price * ((1 - (PIS+COFINS)) * (1 - ICMS))
-      
-      const pisCofinsFactor = 1 - ((Number(pis) + Number(cofins)) / 100);
-      const icmsFactor = 1 - (Number(icms) / 100);
-      const grossNum = Number(grossPrice);
-      
-      if (grossNum > 0 && pisCofinsFactor > 0 && icmsFactor > 0) {
-        const net = grossNum * pisCofinsFactor * icmsFactor;
-        
-        // Update Net Price if changed
-        if (Math.abs(net - priceNum) > 0.01) {
-          setPrice(net.toFixed(2));
-          // Note: Updating price will trigger useEffect again, which will then calculate margin below
-        } else {
-          // If Net Price is stable, calculate Margin: (Net Price - Cost) / Net Price
-          if (net > 0) {
-            const m = ((net - costNum) / net) * 100;
-            if (Math.abs(m - marginNum) > 0.01) setMargin(m.toFixed(2));
-          }
-        }
-      }
-    } else if (mode === 'simularPreco') {
-      // Calculate Price: Cost / (1 - Margin)
-      const mDecimal = marginNum / 100;
-      if (mDecimal < 1) {
-        const p = costNum / (1 - mDecimal);
-        if (Math.abs(p - priceNum) > 0.01) setPrice(p.toFixed(2));
-      }
-    } else if (mode === 'simularPrecoBruto') {
-      // Calculate Gross Price: Net Price / ((1 - (PIS+COFINS)) * (1 - ICMS))
-      // Formula: Preço Bruto = Preço Líquido / (Fator PIS/COFINS * Fator ICMS)
-      
-      const pisCofinsFactor = 1 - ((Number(pis) + Number(cofins)) / 100);
-      const icmsFactor = 1 - (Number(icms) / 100);
-      
-      if (pisCofinsFactor > 0 && icmsFactor > 0) {
-        const gross = priceNum / (pisCofinsFactor * icmsFactor);
-        if (Math.abs(gross - Number(grossPrice)) > 0.01) setGrossPrice(gross.toFixed(2));
-      }
+  const toRate = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric / 100;
+  };
+
+  const calculatePricingFactors = ({ pisRate, cofinsRate, icmsRate }) => {
+    const pisLiq = pisRate * (1 - icmsRate);
+    const cofinsLiq = cofinsRate * (1 - icmsRate);
+    const fatorImp = 1 - pisLiq - cofinsLiq - icmsRate;
+    return { pisLiq, cofinsLiq, fatorImp };
+  };
+
+  const solvePriceByMargin = ({
+    custoTotal,
+    margemRate,
+    pisRate,
+    cofinsRate,
+    icmsRate,
+    comissaoRate,
+    freteRate,
+    encargoRate,
+    ipiRate
+  }) => {
+    const { pisLiq, cofinsLiq, fatorImp } = calculatePricingFactors({ pisRate, cofinsRate, icmsRate });
+    const denominador = 1 - comissaoRate - freteRate - (margemRate * fatorImp) - pisLiq - cofinsLiq - icmsRate;
+    if (denominador <= 0) {
+      return { error: 'Margem inviável para as alíquotas configuradas.' };
     }
+    const pbBase = custoTotal / denominador;
+    const rolBase = pbBase * fatorImp;
+    const denomEnc = 1 - pisLiq - cofinsLiq - icmsRate - comissaoRate - freteRate;
+    if (denomEnc <= 0) {
+      return { error: 'Parâmetros inviáveis para cálculo com encargo.' };
+    }
+    const pbSemIpi = ((margemRate * rolBase) + custoTotal + (encargoRate * pbBase)) / denomEnc;
+    const pbComIpi = pbSemIpi * (1 + ipiRate);
+    const rol = pbSemIpi * fatorImp;
+    if (rol <= 0) {
+      return { error: 'Parâmetros inviáveis para cálculo.' };
+    }
+    const margemReal = (rol - custoTotal) / rol;
+    return {
+      pbSemIpi,
+      pbComIpi,
+      rol,
+      margemReal
+    };
+  };
+
+  const calculate = (costNum, priceNum, marginNum) => {
+    const pisRate = toRate(pis);
+    const cofinsRate = toRate(cofins);
+    const icmsRate = toRate(icms);
+    const comissaoRate = toRate(comissao);
+    const freteRate = toRate(frete);
+    const encargoRate = toRate(encargo);
+    const ipiRate = toRate(ipi);
+    const { fatorImp } = calculatePricingFactors({ pisRate, cofinsRate, icmsRate });
+    const catalogGross = Number(selectedCatalogEntry?.catalog_gross_price || 0);
+    const catalogNet = Number(selectedCatalogEntry?.catalog_price || 0);
+    const netFactorFromCatalog = catalogGross > 0 && catalogNet > 0 ? (catalogNet / catalogGross) : (1 - icmsRate);
+
+    if (mode === 'simularMargem') {
+      const grossNum = Number(grossPrice);
+      if (grossNum <= 0 || netFactorFromCatalog <= 0) {
+        setCalculationError('');
+        return;
+      }
+      const netPrice = grossNum * netFactorFromCatalog;
+      if (Math.abs(netPrice - priceNum) > 0.01) {
+        setPrice(netPrice.toFixed(2));
+      }
+      const calculatedMargin = ((netPrice - costNum) / netPrice) * 100;
+      if (Number.isFinite(calculatedMargin) && Math.abs(calculatedMargin - marginNum) > 0.01) {
+        setMargin(calculatedMargin.toFixed(2));
+      }
+      setCalculationError('');
+    } else if (mode === 'simularPreco') {
+      const margemRate = marginNum / 100;
+      const margemDenominador = 1 - margemRate;
+      if (margemDenominador <= 0 || netFactorFromCatalog <= 0) {
+        setCalculationError('Margem inviável para os parâmetros atuais.');
+        return;
+      }
+      const netPrice = costNum / margemDenominador;
+      const grossFromNet = netPrice / netFactorFromCatalog;
+      if (Math.abs(netPrice - priceNum) > 0.01) {
+        setPrice(netPrice.toFixed(2));
+      }
+      if (Math.abs(grossFromNet - Number(grossPrice)) > 0.01) {
+        setGrossPrice(grossFromNet.toFixed(2));
+      }
+      setCalculationError('');
+    } else if (mode === 'simularPrecoBruto') {
+      if (fatorImp <= 0) {
+        setCalculationError('Não foi possível calcular com as alíquotas atuais.');
+        return;
+      }
+      const gross = priceNum / fatorImp;
+      if (Math.abs(gross - Number(grossPrice)) > 0.01) {
+        setGrossPrice(gross.toFixed(2));
+      }
+      setCalculationError('');
+    }
+  };
+
+  const handleOpenSaveSimulation = () => {
+    if (!user) return;
+    if (!selectedProductSku) {
+      toast.error('Selecione um produto.');
+      return;
+    }
+    if (!selectedVolume) {
+      toast.error('Selecione o volume do SKU.');
+      return;
+    }
+    setShowSaveModal(true);
   };
 
   const handleSaveSimulation = async () => {
     if (!user) return;
-    
+    if (!saveForm.clientName.trim()) {
+      toast.error('Cliente é obrigatório.');
+      return;
+    }
+
     try {
       setLoading(true);
+      const parsedPrice = Number(price) || 0;
+      const parsedCost = Number(cost) || 0;
+      const parsedMargin = Number(margin) || 0;
+      const parsedGrossPrice = Number(grossPrice) || 0;
+
       const { error } = await supabase
         .from('simulations_history')
         .insert({
           user_id: user.id,
           sku: sku || 'N/A',
+          datasul_code: selectedProductSku || null,
+          volume: selectedVolume ? Number(selectedVolume) : null,
           product_name: productName || 'Simulação Avulsa',
-          price: Number(price),
-          cost: Number(cost),
-          margin: Number(margin),
+          price: parsedPrice,
+          cost: parsedCost,
+          margin: parsedMargin,
           mode: mode,
-          pis: mode === 'simularPrecoBruto' ? Number(pis) : null,
-          cofins: mode === 'simularPrecoBruto' ? Number(cofins) : null,
-          icms: mode === 'simularPrecoBruto' ? Number(icms) : null,
-          gross_price: mode === 'simularPrecoBruto' ? Number(grossPrice) : null,
+          pis: Number(pis),
+          cofins: Number(cofins),
+          icms: Number(icms),
+          gross_price: parsedGrossPrice,
           user_email: user.email,
-          user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0]
+          user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
+          client_name: saveForm.clientName.trim(),
+          target: saveForm.target?.trim() || null,
+          observations: saveForm.observations?.trim() || null,
+          catalog_cost: Number(selectedCatalogEntry?.catalog_cost || 0),
+          catalog_price: Number(selectedCatalogEntry?.catalog_price || 0),
+          catalog_gross_price: Number(selectedCatalogEntry?.catalog_gross_price || selectedCatalogEntry?.catalog_price || 0),
+          catalog_margin: Number(selectedCatalogEntry?.catalog_margin || 0)
         });
 
       if (error) throw error;
       
       toast.success('Simulação salva com sucesso!');
+      setShowSaveModal(false);
+      setSaveForm({ clientName: '', target: '', observations: '' });
       if (isPricingUser) loadHistory();
       
     } catch (error) {
@@ -264,6 +441,129 @@ const SimulationPage = ({ user }) => {
       toast.error(`Erro ao salvar simulação: ${error.message || 'Erro desconhecido'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getDisplayName = (name, email) => {
+    const baseName = String(name || '').trim();
+    if (baseName) return baseName;
+    const baseEmail = String(email || '').trim().toLowerCase();
+    if (baseEmail.includes('@')) {
+      const localPart = baseEmail.split('@')[0];
+      const normalized = localPart.replace(/[._-]+/g, ' ').trim();
+      if (normalized) {
+        return normalized
+          .split(/\s+/)
+          .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(' ');
+      }
+    }
+    return 'Usuário';
+  };
+
+  const handleDeleteSimulation = async (simulationId) => {
+    if (!simulationId || !isPricingUser) return;
+    try {
+      setDeleteLoading(true);
+      const { data, error } = await supabase
+        .from('simulations_history')
+        .delete()
+        .eq('id', simulationId)
+        .select('id');
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('Sem permissão para excluir esta simulação no banco de dados.');
+      }
+      setHistory(prev => prev.filter(item => item.id !== simulationId));
+      if (selectedHistoryItem?.id === simulationId) {
+        setSelectedHistoryItem(null);
+        setShowHistoryDetailModal(false);
+      }
+      setDeleteConfirmItem(null);
+      toast.success('Simulação excluída com sucesso.');
+    } catch (error) {
+      toast.error(`Erro ao excluir simulação: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const closeHistoryDetailModal = () => {
+    setIsClosingHistoryDetailModal(true);
+    setTimeout(() => {
+      setShowHistoryDetailModal(false);
+      setSelectedHistoryItem(null);
+      setIsClosingHistoryDetailModal(false);
+    }, 280);
+  };
+
+  const triggerDecisionEffect = (status) => {
+    const tokens = status === 'approved'
+      ? Array.from({ length: 28 }, (_, idx) => ({
+          id: `${Date.now()}-${idx}`,
+          left: Math.random() * 100,
+          delay: Math.random() * 0.7,
+          duration: 1.4 + Math.random() * 1.3,
+          size: 14 + Math.random() * 18
+        }))
+      : [];
+    const logoTokens = status === 'approved'
+      ? Array.from({ length: 10 }, (_, idx) => ({
+          id: `logo-${Date.now()}-${idx}`,
+          left: Math.random() * 100,
+          delay: Math.random() * 0.8,
+          duration: 1.8 + Math.random() * 1.4,
+          size: 22 + Math.random() * 24
+        }))
+      : [];
+    setDecisionEffect({ visible: true, status, tokens, logoTokens });
+    setTimeout(() => {
+      setDecisionEffect({ visible: false, status: '', tokens: [], logoTokens: [] });
+    }, status === 'approved' ? 2600 : 900);
+  };
+
+  const catalogMarginValue = Number(selectedCatalogEntry?.catalog_margin || 0);
+  const marginForDisplay = selectedCatalogEntry && !hasManualInput ? catalogMarginValue : Number(margin || 0);
+
+  const getApprovalStatus = (item) => {
+    const status = String(item?.approval_status || '').trim().toLowerCase();
+    if (status === 'approved') return 'approved';
+    if (status === 'rejected') return 'rejected';
+    return 'pending';
+  };
+
+  const approvalStatusUi = {
+    pending: { label: 'Pendente', badgeClass: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/40' },
+    approved: { label: 'Aprovado', badgeClass: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/40' },
+    rejected: { label: 'Reprovado', badgeClass: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/40' }
+  };
+
+  const handleReviewSimulation = async (status) => {
+    if (!selectedHistoryItem?.id || !isPricingUser || !user) return;
+    try {
+      setReviewLoading(true);
+      const payload = {
+        approval_status: status,
+        approved_at: new Date().toISOString(),
+        approved_by_id: user.id,
+        approved_by_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Pricing'
+      };
+      const { error } = await supabase
+        .from('simulations_history')
+        .update(payload)
+        .eq('id', selectedHistoryItem.id);
+      if (error) throw error;
+
+      const updated = { ...selectedHistoryItem, ...payload };
+      setSelectedHistoryItem(updated);
+      setHistory(prev => prev.map(item => item.id === selectedHistoryItem.id ? updated : item));
+      toast.success(status === 'approved' ? 'Simulação aprovada com sucesso.' : 'Simulação reprovada com sucesso.');
+      triggerDecisionEffect(status);
+      closeHistoryDetailModal();
+    } catch (error) {
+      toast.error(`Erro ao atualizar status: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setReviewLoading(false);
     }
   };
 
@@ -435,6 +735,48 @@ const SimulationPage = ({ user }) => {
     return new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num / 100);
   };
 
+  const formatCurrencyInput = (value) => {
+    const digits = String(value || '').replace(/\D/g, '');
+    const numeric = Number(digits) / 100;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numeric || 0);
+  };
+
+  const grossPriceForSaveModal = useMemo(() => {
+    return Number(grossPrice) || 0;
+  }, [grossPrice]);
+
+  const selectedHistoryMetrics = useMemo(() => {
+    if (!selectedHistoryItem) return null;
+    const volume = Number(selectedHistoryItem.volume || 0);
+    const catalogPrice = Number(selectedHistoryItem.catalog_price || 0);
+    const catalogGrossPrice = Number(selectedHistoryItem.catalog_gross_price || 0);
+    const catalogMargin = Number(selectedHistoryItem.catalog_margin || 0);
+    const simulatedPrice = Number(selectedHistoryItem.price || 0);
+    const simulatedGrossPrice = Number(selectedHistoryItem.gross_price || 0);
+    const simulatedMargin = Number(selectedHistoryItem.margin || 0);
+    const robCatalog = volume * (catalogGrossPrice || catalogPrice);
+    const robEstimated = volume * (simulatedGrossPrice || simulatedPrice);
+    const mbCatalog = robCatalog * (catalogMargin / 100);
+    const mbEstimated = robEstimated * (simulatedMargin / 100);
+    return {
+      volume,
+      catalogPrice,
+      catalogGrossPrice,
+      catalogMargin,
+      simulatedPrice,
+      simulatedGrossPrice,
+      simulatedMargin,
+      robCatalog,
+      robEstimated,
+      mbCatalog,
+      mbEstimated,
+      grossPriceVariation: simulatedGrossPrice - catalogGrossPrice,
+      marginVariationPp: simulatedMargin - catalogMargin,
+      robVariation: robEstimated - robCatalog,
+      mbVariation: mbEstimated - mbCatalog
+    };
+  }, [selectedHistoryItem]);
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">
       <Header 
@@ -545,12 +887,33 @@ const SimulationPage = ({ user }) => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
+              <div className="space-y-2">
+                <Label>Selecionar Volume</Label>
+                <select
+                  value={selectedVolume}
+                  onChange={(e) => setSelectedVolume(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Selecione o volume</option>
+                  {volumeOptions.map(option => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                 <div className="space-y-1 md:col-span-8">
                     <Label className="text-xs text-muted-foreground">Produto Selecionado</Label>
-                    <div className="font-medium truncate" title={productName}>{productName || '-'}</div>
+                    <div className="font-medium leading-snug break-words">{productName || '-'}</div>
                  </div>
-                 {/* SKU code hidden as per request */}
+                 <div className="space-y-1 md:col-span-2 md:text-right">
+                    <Label className="text-xs text-muted-foreground">Preço</Label>
+                    <div className="font-medium">{formatCurrency(selectedCatalogEntry?.catalog_gross_price ?? grossPrice ?? 0)}</div>
+                 </div>
+                 <div className="space-y-1 md:col-span-2 md:text-right">
+                    <Label className="text-xs text-muted-foreground">Margem</Label>
+                    <div className="font-medium">{formatPercent(catalogMarginValue || marginForDisplay)}</div>
+                 </div>
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
@@ -599,14 +962,17 @@ const SimulationPage = ({ user }) => {
                 {/* Dynamic Inputs based on Mode */}
                 {mode === 'simularMargem' ? (
                   <div className="space-y-2">
-                    <Label htmlFor="grossPrice">Preço Bruto de Venda (Novo)</Label>
+                    <Label htmlFor="grossPrice">Preço bruto (novo)</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-2.5 text-muted-foreground">R$</span>
                       <Input 
                         id="grossPrice" 
                         type="number" 
                         value={grossPrice} 
-                        onChange={(e) => setGrossPrice(e.target.value)}
+                        onChange={(e) => {
+                          setHasManualInput(true);
+                          setGrossPrice(e.target.value);
+                        }}
                         onBlur={(e) => handleBlur(setGrossPrice, e.target.value)}
                         className="pl-8 font-semibold text-lg"
                       />
@@ -621,7 +987,10 @@ const SimulationPage = ({ user }) => {
                         id="margin" 
                         type="number" 
                         value={margin} 
-                        onChange={(e) => setMargin(e.target.value)}
+                        onChange={(e) => {
+                          setHasManualInput(true);
+                          setMargin(e.target.value);
+                        }}
                         onBlur={(e) => handleBlur(setMargin, e.target.value)}
                         className="pl-8 font-semibold text-lg"
                       />
@@ -636,7 +1005,7 @@ const SimulationPage = ({ user }) => {
                         <Popover>
                           <PopoverTrigger asChild>
                             <button className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors h-[28px]">
-                              <Map className="w-3.5 h-3.5" />
+                              <MapIcon className="w-3.5 h-3.5" />
                               Alíquotas ICMS
                             </button>
                           </PopoverTrigger>
@@ -769,7 +1138,7 @@ const SimulationPage = ({ user }) => {
 
             </CardContent>
             <CardFooter>
-              <Button onClick={handleSaveSimulation} className="w-full bg-[#845AFA] hover:bg-[#6b46c1] text-white" disabled={loading}>
+              <Button onClick={handleOpenSaveSimulation} className="w-full bg-[#845AFA] hover:bg-[#6b46c1] text-white" disabled={loading}>
                 {loading ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : <History className="w-4 h-4 mr-2" />}
                 Salvar Simulação
               </Button>
@@ -789,35 +1158,35 @@ const SimulationPage = ({ user }) => {
               {/* Main Result */}
               <div className="flex flex-col items-center justify-center p-8 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-slate-800 dark:to-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm">
                 <span className="text-gray-500 dark:text-slate-400 text-sm font-medium uppercase tracking-widest mb-3">
-                  {mode === 'simularMargem' ? 'Margem Líquida Resultante' : 
-                   mode === 'simularPreco' ? 'Preço Líquido Sugerido' : 
+                  {mode === 'simularMargem' ? 'Margem Bruta Resultante' : 
+                   mode === 'simularPreco' ? 'Preço Bruto Sugerido' : 
                    'Preço Bruto Calculado'}
                 </span>
                 <div className="text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
                   {mode === 'simularMargem' ? (
                     isPricingUser ? (
-                      <span className={Number(margin) < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
-                        {formatPercent(Number(margin))}
+                      <span className={marginForDisplay < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
+                        {formatPercent(marginForDisplay)}
                       </span>
                     ) : '***'
                   ) : mode === 'simularPreco' ? (
                     <span className="text-[#845AFA]">
-                      {formatCurrency(Number(price))}
+                      {formatCurrency(Number(grossPrice))}
                     </span>
                   ) : (
-                    // simularPrecoBruto Result
                     <span className="text-[#845AFA]">
                       {formatCurrency(Number(grossPrice))}
                     </span>
                   )}
                 </div>
-                
-                {/* Gross Price Estimate (only for simularPreco mode) */}
-                {mode === 'simularPreco' && Number(price) > 0 && (
-                   <div className="mt-3 text-sm text-gray-500 dark:text-slate-400">
-                      Preço Bruto Est.: <span className="font-semibold text-gray-700 dark:text-slate-300">{formatCurrency(Number(price) * taxFactor)}</span>
-                   </div>
+                {calculationError && (
+                  <div className="mt-3 text-xs text-red-600 dark:text-red-400">
+                    {calculationError}
+                  </div>
                 )}
+                <div className="mt-4 px-3 py-1.5 rounded-full bg-[#845AFA]/10 border border-[#845AFA]/20 text-xs font-medium text-[#6b46c1] dark:text-purple-300">
+                  Margem catálogo: {formatPercent(catalogMarginValue || Number(margin || 0))}
+                </div>
                 
                 {/* Tax Breakdown (only for simularPrecoBruto mode) */}
                 {mode === 'simularPrecoBruto' && Number(grossPrice) > 0 && (
@@ -877,56 +1246,88 @@ const SimulationPage = ({ user }) => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="overflow-auto max-h-[600px] -mx-6 px-6">
-                  <Table>
+                <div className="overflow-y-auto max-h-[600px] -mx-6 px-6">
+                  <Table className="w-full table-auto">
                     <TableHeader>
                       <TableRow>
-                        <TableHead>ID Simulação</TableHead>
-                        <TableHead>Versão</TableHead>
-                        <TableHead className="text-right">Custo Total</TableHead>
-                        <TableHead className="text-right">Margem</TableHead>
-                        <TableHead className="text-right">Preço Liq.</TableHead>
-                        <TableHead className="text-right">Preço Bruto</TableHead>
-                        <TableHead className="text-right">Usuário / Data</TableHead>
+                        <TableHead className="text-left">ID</TableHead>
+                        <TableHead className="text-left">Produto</TableHead>
+                        <TableHead className="text-left">Volume</TableHead>
+                        <TableHead className="text-left">Custo Total</TableHead>
+                        <TableHead className="text-left">Margem</TableHead>
+                        <TableHead className="text-left">Preço Liq.</TableHead>
+                        <TableHead className="text-left">Preço Bruto</TableHead>
+                        <TableHead className="text-left">Status</TableHead>
+                        <TableHead className="text-left">Usuário / Data</TableHead>
+                        <TableHead className="text-left">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {history.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                             Nenhuma simulação registrada
                           </TableCell>
                         </TableRow>
                       ) : (
                         history.map((item) => (
-                          <TableRow key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                            <TableCell className="whitespace-nowrap text-xs font-mono text-gray-500">
-                              {item.sku && item.sku !== 'Importado' && item.sku !== 'N/A' ? item.sku : item.id.substring(0, 8)}
+                          <TableRow
+                            key={item.id}
+                            className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer"
+                            onClick={() => {
+                              setSelectedHistoryItem(item);
+                              setIsClosingHistoryDetailModal(false);
+                              setShowHistoryDetailModal(true);
+                            }}
+                          >
+                            <TableCell className="text-xs font-mono text-gray-500 align-top">
+                              {item.simulation_number || item.id.substring(0, 8)}
                             </TableCell>
-                            <TableCell className="font-medium text-xs max-w-[200px] truncate" title={item.product_name}>
+                            <TableCell className="font-medium text-xs leading-tight break-words align-top" title={item.product_name}>
                               {item.product_name}
                             </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-xs">
+                            <TableCell className="text-xs align-top">
+                              {item.volume || '-'}
+                            </TableCell>
+                            <TableCell className="text-xs align-top">
                               {formatCurrency(item.cost)}
                             </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-xs">
+                            <TableCell className="text-xs align-top">
                               <Badge variant={item.margin < 10 ? "destructive" : "secondary"} className="text-[10px]">
                                 {formatPercent(item.margin)}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-xs">
+                            <TableCell className="text-xs align-top">
                               {formatCurrency(item.price)}
                             </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-xs">
+                            <TableCell className="text-xs align-top">
                               {item.gross_price ? formatCurrency(item.gross_price) : '-'}
                             </TableCell>
-                            <TableCell className="text-right text-xs">
-                             <div className="flex flex-col items-end">
-                                <span className="font-medium">{item.user_name || item.user_email?.split('@')[0] || 'Usuário'}</span>
+                            <TableCell className="text-xs align-top">
+                              <Badge className={cn("text-[10px] border", approvalStatusUi[getApprovalStatus(item)].badgeClass)}>
+                                {approvalStatusUi[getApprovalStatus(item)].label}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs align-top">
+                             <div className="flex flex-col items-start">
+                                <span className="font-medium">{getDisplayName(item.user_name_from_users || item.user_name, item.user_email)}</span>
                                 <span className="text-[10px] text-muted-foreground">
                                   {format(new Date(item.created_at), "dd/MM/yy HH:mm", { locale: ptBR })}
                                 </span>
                              </div>
+                          </TableCell>
+                            <TableCell className="align-top">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteConfirmItem(item);
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </TableCell>
                           </TableRow>
                         ))
@@ -938,6 +1339,269 @@ const SimulationPage = ({ user }) => {
             </Card>
           </div>
         )}
+
+        <AlertDialog
+          open={Boolean(deleteConfirmItem)}
+          onOpenChange={(open) => {
+            if (!open && !deleteLoading) setDeleteConfirmItem(null);
+          }}
+        >
+          <AlertDialogContent className="max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta ação remove a simulação do histórico no banco de dados e não pode ser desfeita.
+              </AlertDialogDescription>
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                <div><span className="font-medium">Produto:</span> {deleteConfirmItem?.product_name || '-'}</div>
+                <div><span className="font-medium">ID:</span> {deleteConfirmItem?.simulation_number || deleteConfirmItem?.id?.substring(0, 8) || '-'}</div>
+              </div>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteLoading}>Cancelar</AlertDialogCancel>
+              <Button
+                onClick={() => {
+                  if (!deleteConfirmItem?.id) return;
+                  handleDeleteSimulation(deleteConfirmItem.id);
+                }}
+                disabled={deleteLoading}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {deleteLoading ? 'Excluindo...' : 'Excluir simulação'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {showSaveModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#171717] rounded-lg w-full max-w-lg p-6 space-y-4 border border-gray-200 dark:border-gray-800">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Salvar Simulação</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <Label>SKU</Label>
+                  <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">{productName || '-'}</div>
+                </div>
+                <div>
+                  <Label>Volume</Label>
+                  <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">{selectedVolume || '-'}</div>
+                </div>
+                <div className="col-span-2">
+                  <Label>Preço Bruto (novo)</Label>
+                  <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">{formatCurrency(grossPriceForSaveModal)}</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Cliente *</Label>
+                <Input
+                  value={saveForm.clientName}
+                  onChange={(e) => setSaveForm(prev => ({ ...prev, clientName: e.target.value }))}
+                  placeholder="Informe o cliente"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Target</Label>
+                <Input
+                  value={saveForm.target}
+                  onChange={(e) => setSaveForm(prev => ({ ...prev, target: formatCurrencyInput(e.target.value) }))}
+                  placeholder="R$ 0,00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Observações</Label>
+                <textarea
+                  value={saveForm.observations}
+                  onChange={(e) => setSaveForm(prev => ({ ...prev, observations: e.target.value }))}
+                  placeholder="Observações adicionais"
+                  className="w-full min-h-[90px] px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowSaveModal(false)}>Cancelar</Button>
+                <Button onClick={handleSaveSimulation} disabled={loading} className="bg-[#845AFA] hover:bg-[#6b46c1] text-white">
+                  Confirmar e Salvar
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(showHistoryDetailModal || isClosingHistoryDetailModal) && selectedHistoryItem && selectedHistoryMetrics && (
+          <div className={cn("fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-300", isClosingHistoryDetailModal ? "bg-black/0 opacity-0" : "bg-black/50 opacity-100")}>
+            <div className={cn("bg-white dark:bg-[#111111] rounded-2xl w-full max-w-4xl p-0 border border-[#845AFA]/20 dark:border-[#845AFA]/30 overflow-hidden shadow-2xl transition-all duration-300", isClosingHistoryDetailModal ? "opacity-0 scale-95 translate-y-3" : "opacity-100 scale-100 translate-y-0")}>
+              <div className="bg-gradient-to-r from-[#845AFA] to-[#6b46c1] px-6 py-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">
+                    Detalhes da Simulação #{selectedHistoryItem.simulation_number || selectedHistoryItem.id.substring(0, 8)}
+                  </h3>
+                  <p className="text-xs text-purple-100 mt-1">
+                    {selectedHistoryItem.product_name || '-'} • Volume {selectedHistoryItem.volume || '-'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={cn("text-[11px] border bg-white/10 text-white border-white/30", getApprovalStatus(selectedHistoryItem) === 'approved' && "bg-green-500/20 border-green-200/30", getApprovalStatus(selectedHistoryItem) === 'rejected' && "bg-red-500/20 border-red-200/30")}>
+                    {approvalStatusUi[getApprovalStatus(selectedHistoryItem)].label}
+                  </Badge>
+                  <Button variant="outline" size="icon" className="bg-white text-[#6b46c1] border-white hover:bg-purple-50" onClick={closeHistoryDetailModal}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="p-6 space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div className="p-4 rounded-xl border border-purple-100 dark:border-purple-900/30 bg-purple-50/50 dark:bg-purple-900/10">
+                    <div className="font-semibold mb-3 text-[#6b46c1] dark:text-purple-300">Catálogo</div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Líquido</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.catalogPrice)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Bruto</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.catalogGrossPrice)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Margem</span><span className="font-medium">{formatPercent(selectedHistoryMetrics.catalogMargin)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.robCatalog)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.mbCatalog)}</span></div>
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-xl border border-[#845AFA]/20 dark:border-[#845AFA]/30 bg-white dark:bg-[#1a1a1a]">
+                    <div className="font-semibold mb-3 text-[#845AFA]">Simulado</div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Líquido</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.simulatedPrice)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Bruto</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.simulatedGrossPrice)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Margem</span><span className="font-medium">{formatPercent(selectedHistoryMetrics.simulatedMargin)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.robEstimated)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.mbEstimated)}</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Preço Bruto</div>
+                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.grossPriceVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
+                      {formatCurrency(selectedHistoryMetrics.grossPriceVariation)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Margem</div>
+                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.marginVariationPp < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
+                      {selectedHistoryMetrics.marginVariationPp.toFixed(2)} p.p.
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. ROB</div>
+                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.robVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
+                      {formatCurrency(selectedHistoryMetrics.robVariation)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. MB</div>
+                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.mbVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
+                      {formatCurrency(selectedHistoryMetrics.mbVariation)}
+                    </div>
+                  </div>
+                </div>
+                {isPricingUser && (
+                  <div className="flex flex-wrap justify-end gap-2 pt-1">
+                    <Button
+                      onClick={() => handleReviewSimulation('rejected')}
+                      disabled={reviewLoading}
+                      variant="outline"
+                      className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-900/20"
+                    >
+                      <XCircle className="w-4 h-4 mr-1.5" />
+                      Reprovar
+                    </Button>
+                    <Button
+                      onClick={() => handleReviewSimulation('approved')}
+                      disabled={reviewLoading}
+                      variant="outline"
+                      className="bg-white text-green-700 border-green-300 hover:bg-green-50 dark:bg-transparent dark:text-green-400 dark:border-green-800/40 dark:hover:bg-green-900/20"
+                    >
+                      <Check className="w-4 h-4 mr-1.5" />
+                      Aprovar
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {decisionEffect.visible && (
+          <div className="fixed inset-0 z-[70] pointer-events-none overflow-hidden">
+            <div className={cn("absolute inset-0", decisionEffect.status === 'approved' ? "bg-emerald-500/10" : "bg-red-500/10")} />
+            {decisionEffect.status === 'approved' ? (
+              <>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <img
+                    src="/logo-pronutrition-symbol.png"
+                    alt="PRO Nutrition"
+                    className="w-36 h-36 object-contain drop-shadow-2xl pro-logo-spotlight"
+                  />
+                </div>
+                {decisionEffect.tokens.map((token) => (
+                  <span
+                    key={token.id}
+                    className="absolute top-[-10%] text-emerald-400 font-bold pro-dollar-fall"
+                    style={{
+                      left: `${token.left}%`,
+                      animationDelay: `${token.delay}s`,
+                      animationDuration: `${token.duration}s`,
+                      fontSize: `${token.size}px`
+                    }}
+                  >
+                    $
+                  </span>
+                ))}
+                {decisionEffect.logoTokens.map((token) => (
+                  <img
+                    key={token.id}
+                    src="/logo-pronutrition-symbol.png"
+                    alt="PRO"
+                    className="absolute top-[-10%] object-contain opacity-90 pro-logo-fall"
+                    style={{
+                      left: `${token.left}%`,
+                      animationDelay: `${token.delay}s`,
+                      animationDuration: `${token.duration}s`,
+                      width: `${token.size}px`,
+                      height: `${token.size}px`
+                    }}
+                  />
+                ))}
+              </>
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/90 text-white pro-reject-pop">
+                  <XCircle className="w-5 h-5" />
+                  <span className="font-semibold">Simulação Reprovada</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <style>{`
+          @keyframes proLogoSpotlight {
+            0% { transform: scale(0.62); opacity: 0; filter: brightness(1); }
+            18% { transform: scale(1.06); opacity: 1; filter: brightness(1.1); }
+            76% { transform: scale(1); opacity: 1; filter: brightness(1); }
+            100% { transform: scale(0.9); opacity: 0; filter: brightness(0.95); }
+          }
+          @keyframes proDollarFall {
+            0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(120vh) rotate(360deg); opacity: 0; }
+          }
+          @keyframes proLogoFall {
+            0% { transform: translateY(-10vh) rotate(0deg) scale(0.75); opacity: 0; }
+            12% { opacity: 1; }
+            100% { transform: translateY(120vh) rotate(320deg) scale(1); opacity: 0; }
+          }
+          @keyframes proRejectPop {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+          }
+          .pro-logo-spotlight { animation: proLogoSpotlight 2.4s ease-in-out forwards; }
+          .pro-dollar-fall { animation-name: proDollarFall; animation-timing-function: linear; animation-fill-mode: forwards; }
+          .pro-logo-fall { animation-name: proLogoFall; animation-timing-function: linear; animation-fill-mode: forwards; }
+          .pro-reject-pop { animation: proRejectPop 220ms ease-out; }
+        `}</style>
 
       </div>
     </div>

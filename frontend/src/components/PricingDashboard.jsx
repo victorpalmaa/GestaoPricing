@@ -55,7 +55,7 @@ const PricingDashboard = ({ user }) => {
   const basePriceOptions = useMemo(() => {
     return pricingData.map(p => ({
       value: p.id,
-      label: `${p.sku} - ${p.clients?.name || 'Sem cliente'} - ${p.month || '-'} - ${p.currency === 'USD' ? '$' : 'R$'} ${Number(p.net_price).toFixed(2)}`
+      label: `${p.sku} - ${p.clients?.name || 'Sem cliente'} - ${p.month || '-'} - ${p.currency === 'USD' ? '$' : 'R$'} ${(parsePriceNumber(p.net_price) ?? 0).toFixed(2)}`
     }));
   }, [pricingData]);
 
@@ -105,7 +105,6 @@ const PricingDashboard = ({ user }) => {
   const [editingId, setEditingId] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
-  const [togglingVigencyId, setTogglingVigencyId] = useState(null);
 
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
@@ -121,9 +120,31 @@ const PricingDashboard = ({ user }) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   };
 
+  function parsePriceNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+    if (typeof value !== 'string') return null;
+    if (/^-?\d+(\.\d+)?$/.test(value.trim())) {
+      const direct = Number(value.trim());
+      return Number.isNaN(direct) ? null : direct;
+    }
+    let normalized = value.replace(/[R$\s]/g, '').trim();
+    if (!normalized) return null;
+    if (normalized.includes(',') && normalized.includes('.')) {
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else if (normalized.includes(',')) {
+      normalized = normalized.replace(',', '.');
+    }
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
   const getGroupKey = (clientId, sku) => `${clientId}::${(sku || '').toString().trim().toUpperCase()}`;
 
   const comparePricingRows = (a, b) => {
+    if (Boolean(a.is_current) !== Boolean(b.is_current)) {
+      return Boolean(b.is_current) - Boolean(a.is_current);
+    }
     const bDate = parsePricingDate(b.date);
     const aDate = parsePricingDate(a.date);
     const dateDiff = (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
@@ -195,11 +216,21 @@ const PricingDashboard = ({ user }) => {
     return uniqueSKUs.map(sku => ({ label: sku, value: sku }));
   }, [safePricingData, filters.client, filters.category, filters.subcategory, filters.size]);
 
+  const codesFromSelectedSKU = useMemo(() => {
+    if (!filters.sku) return [];
+    const matches = (safePricingData || []).filter(item => {
+      if (item.sku !== filters.sku) return false;
+      if (!item.code) return false;
+      if (filters.client && item.client_id !== filters.client) return false;
+      return true;
+    });
+    return [...new Set(matches.map(item => item.code))];
+  }, [safePricingData, filters.sku, filters.client]);
+
   useEffect(() => {
     loadData();
   }, [filters.dateFrom, filters.dateTo]);
 
-  // Realtime Subscription
   useEffect(() => {
     const channel = supabase
       .channel('pricing_dashboard_changes')
@@ -210,8 +241,7 @@ const PricingDashboard = ({ user }) => {
           schema: 'public',
           table: 'pricing_history'
         },
-        (payload) => {
-          // Update data without full reload if possible, but loadData is safer for consistency
+        () => {
           loadData();
         }
       )
@@ -262,8 +292,27 @@ const PricingDashboard = ({ user }) => {
       let query = supabase
         .from('pricing_history')
         .select(`
-          *,
-          clients(name)
+          id,
+          client_id,
+          sku,
+          date,
+          currency,
+          created_at,
+          is_current,
+          size,
+          manager,
+          code,
+          net_price,
+          gross_price,
+          margin_budget,
+          month,
+          category,
+          subcategory,
+          obs,
+          readjustment_status,
+          last_price_date,
+          gate,
+          clients!inner(name)
         `)
         .order('date', { ascending: false });
 
@@ -290,6 +339,11 @@ const PricingDashboard = ({ user }) => {
 
       const currentIdMap = new Map();
       groupedRows.forEach((rows, key) => {
+        const flaggedCurrent = rows.find(row => row.is_current);
+        if (flaggedCurrent?.id) {
+          currentIdMap.set(key, flaggedCurrent.id);
+          return;
+        }
         const sortedRows = [...rows].sort(comparePricingRows);
         if (sortedRows[0]?.id) {
           currentIdMap.set(key, sortedRows[0].id);
@@ -300,6 +354,8 @@ const PricingDashboard = ({ user }) => {
         // Derivar Categoria e Subcategoria corretamente
         let category = item.category;
         let subcategory = item.subcategory;
+        const normalizedNetPrice = parsePriceNumber(item.net_price);
+        const normalizedGrossPrice = parsePriceNumber(item.gross_price);
         
         // Garantir que o mês esteja preenchido para visualização
         let month = item.month;
@@ -319,7 +375,7 @@ const PricingDashboard = ({ user }) => {
         // Se a categoria não for uma das padrão, tentar derivar
         const validCategories = ['Pó', 'Gel', 'Goma', 'Cápsula', 'Pastilha', 'Softgel'];
         if (!validCategories.includes(category)) {
-          const checkStr = String(subcategory || category || '').toLowerCase();
+          const checkStr = (subcategory || category || '').toLowerCase();
           
           if (checkStr.includes('creatina') || checkStr.includes('colágeno') || checkStr.includes('glutamina') || checkStr.includes('proteína') || checkStr.includes('whey') || checkStr.includes('pre-workout')) {
              category = 'Pó';
@@ -345,6 +401,10 @@ const PricingDashboard = ({ user }) => {
 
         return {
           ...item,
+          db_net_price: item.net_price,
+          db_gross_price: item.gross_price,
+          net_price: normalizedNetPrice,
+          gross_price: normalizedGrossPrice,
           category,
           subcategory,
           month,
@@ -390,7 +450,10 @@ const PricingDashboard = ({ user }) => {
 
   const filteredData = safePricingData.filter(item => {
     const matchesClient = !filters.client || item.client_id === filters.client;
-    const matchesSku = !filters.sku || item.sku === filters.sku;
+    const matchesSku = !filters.sku
+      || (codesFromSelectedSKU.length > 0
+        ? (item.code && codesFromSelectedSKU.includes(item.code))
+        : item.sku === filters.sku);
     const matchesCategory = !filters.category || item.category === filters.category;
     const matchesSubcategory = !filters.subcategory || item.subcategory === filters.subcategory;
     const matchesSize = !filters.size || item.size === filters.size;
@@ -921,28 +984,18 @@ const PricingDashboard = ({ user }) => {
   };
 
   const handleToggleVigency = async (item) => {
-    if (!item?.id) return;
+    if (!canEdit || !item?.id) return;
 
     try {
-      setTogglingVigencyId(item.id);
-
-      const { data: clientRows, error } = await supabase
+      const { data: skuRows, error } = await supabase
         .from('pricing_history')
         .select('*')
-        .eq('client_id', item.client_id);
+        .eq('client_id', item.client_id)
+        .eq('sku', item.sku);
 
       if (error) throw error;
 
-      const normalizedSku = (item.sku || '').toString().trim().toUpperCase();
-      const skuRows = (clientRows || []).filter(
-        row => (row.sku || '').toString().trim().toUpperCase() === normalizedSku
-      );
-      const sortedRows = [...skuRows].sort(comparePricingRows);
-
-      if (sortedRows.length === 0) {
-        toast.error('Não foi possível localizar o histórico deste SKU para o cliente selecionado.');
-        return;
-      }
+      const sortedRows = [...(skuRows || [])].sort(comparePricingRows);
 
       if (item.isCurrent) {
         const nextCurrent = sortedRows.find(row => row.id !== item.id);
@@ -983,13 +1036,7 @@ const PricingDashboard = ({ user }) => {
       loadData();
     } catch (error) {
       console.error('Erro ao alternar vigência:', error);
-      if (error?.message?.toLowerCase()?.includes('row-level security')) {
-        toast.error('Seu usuário não possui permissão para alterar vigência deste preço.');
-        return;
-      }
       toast.error('Erro ao alternar vigência.');
-    } finally {
-      setTogglingVigencyId(null);
     }
   };
 
@@ -1399,10 +1446,14 @@ const PricingDashboard = ({ user }) => {
                           {item.sku}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                          {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.net_price) || 0).toFixed(2)}
+                          {parsePriceNumber(item.db_net_price ?? item.net_price) === null
+                            ? '-'
+                            : `${item.currency === 'USD' ? '$' : 'R$'} ${parsePriceNumber(item.db_net_price ?? item.net_price).toFixed(2)}`}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {item.currency === 'USD' ? '$' : 'R$'} {(Number(item.gross_price) || 0).toFixed(2)}
+                          {parsePriceNumber(item.db_gross_price ?? item.gross_price) === null
+                            ? '-'
+                            : `${item.currency === 'USD' ? '$' : 'R$'} ${parsePriceNumber(item.db_gross_price ?? item.gross_price).toFixed(2)}`}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.currency === 'USD' ? 'Dólar' : 'Real'}
@@ -1413,9 +1464,9 @@ const PricingDashboard = ({ user }) => {
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <button
                             onClick={() => handleToggleVigency(item)}
-                            disabled={togglingVigencyId === item.id}
-                            className={cn('inline-flex rounded-md transition-opacity', togglingVigencyId === item.id && 'opacity-70 cursor-wait')}
-                            title="Clique para alternar vigência"
+                            disabled={!canEdit}
+                            className={cn('inline-flex rounded-md transition-opacity', !canEdit && 'opacity-70 cursor-not-allowed')}
+                            title={canEdit ? 'Clique para alternar vigência' : 'Sem permissão para alterar vigência'}
                           >
                             {item.isCurrent ? (
                               <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>

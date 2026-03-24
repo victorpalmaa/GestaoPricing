@@ -132,6 +132,13 @@ const CS = ({ user }) => {
   });
   const [savingDateEdit, setSavingDateEdit] = useState(false);
 
+  const formatRowCurrency = (value, currency = 'BRL') => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return '-';
+    const currencyCode = currency === 'USD' ? 'USD' : 'BRL';
+    return numericValue.toLocaleString('pt-BR', { style: 'currency', currency: currencyCode });
+  };
+
   // Realtime Subscription
   useEffect(() => {
     const channel = supabase
@@ -186,6 +193,15 @@ const CS = ({ user }) => {
         return Number.isNaN(parsed.getTime()) ? null : parsed;
       };
 
+      const parseNumericValue = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+        const normalized = Number(value);
+        return Number.isNaN(normalized) ? null : normalized;
+      };
+
+      const normalizeGroupText = (value) => (value || '').toString().trim().toUpperCase();
+
       const comparePricingRows = (a, b) => {
         const bDate = parsePricingDate(b.date);
         const aDate = parsePricingDate(a.date);
@@ -204,40 +220,35 @@ const CS = ({ user }) => {
       };
 
       const groups = {};
-      const codeGroups = {};
       
       data.forEach(item => {
-        if (!item.date || !item.sku) return;
-        const skuKey = item.sku.toString().trim().toUpperCase();
-        const key = `${item.client_id}-${skuKey}`;
+        if (!item.date || !item.client_id) return;
+        const normalizedCode = normalizeGroupText(item.code);
+        const normalizedSku = normalizeGroupText(item.sku);
+        const referenceKey = normalizedCode || normalizedSku;
+        if (!referenceKey) return;
+        const key = `${item.client_id}-${referenceKey}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(item);
-
-        if (item.code) {
-          const codeKey = `${item.client_id}-${item.code.toString().trim()}`;
-          if (!codeGroups[codeKey]) codeGroups[codeKey] = [];
-          codeGroups[codeKey].push(item);
-        }
       });
 
       const processedContracts = Object.values(groups).map(group => {
         const sortedGroup = [...group].sort(comparePricingRows);
-        const current = sortedGroup[0];
-        const previous = sortedGroup[1];
-        const codeKey = `${current.client_id}-${(current.code || '').toString().trim()}`;
-        const sortedCodeGroup = codeGroups[codeKey] ? [...codeGroups[codeKey]].sort(comparePricingRows) : [];
-        const currentCodeIndex = sortedCodeGroup.findIndex(row => row.id === current.id);
-        const previousByCode = currentCodeIndex >= 0 ? sortedCodeGroup[currentCodeIndex + 1] : null;
-        const referencePrevious = previousByCode || previous;
+        const currentFromFlag = sortedGroup.find(row => Boolean(row.is_current));
+        const current = currentFromFlag || sortedGroup[0];
+        const currentIndex = sortedGroup.findIndex(row => row.id === current.id);
+        const referencePrevious = currentIndex >= 0 ? sortedGroup[currentIndex + 1] : null;
 
         // Calcular % Reajuste
         let readjustment_pct = 0;
         let previous_price = null;
 
-        if (referencePrevious && Number(referencePrevious.gross_price) > 0) {
-           previous_price = Number(referencePrevious.gross_price);
-           const current_price = Number(current.gross_price);
-           readjustment_pct = ((current_price - previous_price) / previous_price) * 100;
+        const previousGross = parseNumericValue(referencePrevious?.gross_price);
+        const currentGross = parseNumericValue(current?.gross_price);
+
+        if (previousGross !== null && previousGross > 0 && currentGross !== null) {
+           previous_price = previousGross;
+           readjustment_pct = ((currentGross - previousGross) / previousGross) * 100;
         }
 
         // Handle Supabase join result which might be object or array
@@ -252,6 +263,9 @@ const CS = ({ user }) => {
 
         return {
           ...current,
+          gross_price: currentGross,
+          net_price: parseNumericValue(current.net_price),
+          margin_budget: parseNumericValue(current.margin_budget),
           client_name: clientName,
           readjustment_pct,
           previous_price
@@ -353,14 +367,36 @@ const CS = ({ user }) => {
     return uniqueSkus.map(sku => ({ value: sku, label: sku }));
   }, [contracts, filters.manager, filters.client, filters.category, filters.subcategory, filters.size]);
 
+  const codesFromSelectedSKU = useMemo(() => {
+    if (!filters.sku) return [];
+    let filtered = contracts;
+    if (filters.manager) filtered = filtered.filter(item => item.manager === filters.manager);
+    if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
+    if (filters.category) filtered = filtered.filter(item => item.category === filters.category);
+    if (filters.subcategory) filtered = filtered.filter(item => item.subcategory === filters.subcategory);
+    if (filters.size) filtered = filtered.filter(item => item.size === filters.size);
+
+    return [...new Set(
+      filtered
+        .filter(item => item.sku === filters.sku && item.code)
+        .map(item => item.code)
+    )];
+  }, [contracts, filters.manager, filters.client, filters.category, filters.subcategory, filters.size, filters.sku]);
+
   const datasulCodeOptions = useMemo(() => {
     let filtered = contracts;
     if (filters.client) filtered = filtered.filter(item => item.client_name === filters.client);
-    if (filters.sku) filtered = filtered.filter(item => item.sku === filters.sku);
+    if (filters.sku) {
+      if (codesFromSelectedSKU.length > 0) {
+        filtered = filtered.filter(item => item.code && codesFromSelectedSKU.includes(item.code));
+      } else {
+        filtered = filtered.filter(item => item.sku === filters.sku);
+      }
+    }
 
     const uniqueCodes = [...new Set(filtered.map(item => item.code).filter(Boolean))].sort();
     return uniqueCodes.map(code => ({ value: code, label: code }));
-  }, [contracts, filters.client, filters.sku]);
+  }, [contracts, filters.client, filters.sku, codesFromSelectedSKU]);
 
   // Lógica dos Gates
   // calculateContractInfo agora é importada de ../utils/pricingUtils
@@ -390,7 +426,10 @@ const CS = ({ user }) => {
     return processedData.filter(item => {
       const matchManager = !filters.manager || item.manager === filters.manager;
       const matchClient = !filters.client || item.client_name === filters.client;
-      const matchSku = !filters.sku || item.sku === filters.sku;
+      const matchSku = !filters.sku
+        || (codesFromSelectedSKU.length > 0
+          ? (item.code && codesFromSelectedSKU.includes(item.code))
+          : item.sku === filters.sku);
       const matchCategory = !filters.category || item.category === filters.category;
       const matchSubcategory = !filters.subcategory || item.subcategory === filters.subcategory;
       const matchSize = !filters.size || item.size === filters.size;
@@ -426,7 +465,7 @@ const CS = ({ user }) => {
 
       return matchManager && matchClient && matchSku && matchGate && matchCategory && matchSubcategory && matchSize && matchCode && matchDate && matchStatus && matchCommunication;
     });
-  }, [processedData, filters]);
+  }, [processedData, filters, codesFromSelectedSKU]);
 
   const sortedData = useMemo(() => {
     let sortableItems = [...filteredData];
@@ -1050,7 +1089,7 @@ const CS = ({ user }) => {
                         <p>Cliente: <span className="text-gray-900 dark:text-gray-200">{item.client_name}</span></p>
                         <p>Gestor: <span className="text-gray-900 dark:text-gray-200">{item.manager || '-'}</span></p>
                         <p>Preço Atual: <span className="text-gray-900 dark:text-gray-200">
-                          {item.gross_price ? item.gross_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}
+                          {formatRowCurrency(item.gross_price, item.currency)}
                         </span>
                         {item.last_price_date && (
                           <span className="text-xs text-gray-500 ml-2">
@@ -1981,7 +2020,7 @@ const CS = ({ user }) => {
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
                         <div className="flex flex-col">
                           <span className="font-medium text-gray-900 dark:text-white">
-                            {item.gross_price ? item.gross_price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}
+                            {formatRowCurrency(item.gross_price, item.currency)}
                           </span>
                           {item.last_price_date && (
                              <span className="text-xs text-gray-500">

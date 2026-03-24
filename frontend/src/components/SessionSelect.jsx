@@ -19,7 +19,7 @@ const SessionSelect = ({ user }) => {
     if (key === 'catalogo-pro') return 'Em desenvolvimento';
     if (area === 'Pricing') return 'Acessar e gerenciar';
     if (area === 'Pré-vendas') return key === 'pre-vendas' ? 'Acessar e gerenciar' : 'Acessar';
-    if (area === 'CS') return key === 'cs' ? 'Acessar e gerenciar' : 'Acessar';
+    if (area === 'CS') return (key === 'cs' || key === 'pre-vendas') ? 'Acessar e gerenciar' : 'Acessar';
     return 'Acessar';
   };
 

@@ -28,7 +28,7 @@ import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Percent, DollarSign, Activity } from 'lucide-react';
-import { WORKFLOW_STATUS_OPTIONS, filterChangedHistoryPoints } from '../utils/pricingUtils';
+import { WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
 
 const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, readjustmentStatus, onStatusChange }) => {
   const [data, setData] = React.useState([]);
@@ -64,22 +64,39 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
         query = query.eq('sku', sku.trim());
       }
 
-      const { data: historyData, error } = await query;
+      let { data: historyData, error } = await query;
 
       if (error) throw error;
+
+      if (code && (!historyData || historyData.length === 0) && sku) {
+        const fallbackResult = await supabase
+          .from('pricing_history')
+          .select('*')
+          .eq('client_id', clientId)
+          .eq('sku', sku.trim())
+          .order('date', { ascending: true });
+        if (fallbackResult.error) throw fallbackResult.error;
+        historyData = fallbackResult.data || [];
+      }
       
       console.log('HistoryChartModal: Loaded data', historyData?.length);
+
+      const parseNumericValue = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+        const normalized = Number(value);
+        return Number.isNaN(normalized) ? null : normalized;
+      };
 
       const formattedData = (historyData || []).map(item => ({
         ...item,
         dateFormatted: format(new Date(item.date), 'MMM/yy', { locale: ptBR }),
-        gross_price: Number(item.gross_price || 0),
-        net_price: Number(item.net_price || 0),
-        margin_budget: Number(item.margin_budget || 0)
+        gross_price: parseNumericValue(item.gross_price),
+        net_price: parseNumericValue(item.net_price),
+        margin_budget: parseNumericValue(item.margin_budget)
       }));
 
-      const filteredData = filterChangedHistoryPoints(formattedData);
-      setData(filteredData);
+      setData(formattedData);
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
     } finally {
@@ -103,20 +120,24 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
         comparisonPoint = sortedByDate[0];
     }
 
-    const priceVariation = ((latest.gross_price - comparisonPoint.gross_price) / comparisonPoint.gross_price) * 100;
+    const latestGross = Number(latest.gross_price);
+    const comparisonGross = Number(comparisonPoint.gross_price);
+    const priceVariation = comparisonGross > 0 ? ((latestGross - comparisonGross) / comparisonGross) * 100 : 0;
     
     // Average Margin
-    const avgMargin = data.reduce((acc, curr) => acc + curr.margin_budget, 0) / data.length;
+    const margins = data.map(curr => curr.margin_budget).filter(v => typeof v === 'number' && Number.isFinite(v));
+    const avgMargin = margins.length > 0 ? (margins.reduce((acc, curr) => acc + curr, 0) / margins.length) : 0;
 
     return {
       priceVariation,
       avgMargin,
-      currentPrice: latest.gross_price,
-      currentMargin: latest.margin_budget
+      currentPrice: Number.isFinite(latestGross) ? latestGross : 0,
+      currentMargin: Number.isFinite(Number(latest.margin_budget)) ? Number(latest.margin_budget) : 0
     };
   }, [data]);
 
-  const currencySymbol = data.length > 0 && data[0].currency === 'USD' ? '$' : 'R$';
+  const currencyCode = data.length > 0 && data[0].currency === 'USD' ? 'USD' : 'BRL';
+  const currencySymbol = currencyCode === 'USD' ? '$' : 'R$';
 
   const CustomLegend = ({ payload }) => {
     return (
@@ -224,7 +245,7 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
                     yAxisId="left"
                     stroke="#6B7280"
                     tick={{ fill: '#6B7280' }}
-                    tickFormatter={(value) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    tickFormatter={(value) => Number(value).toLocaleString('pt-BR', { style: 'currency', currency: currencyCode })}
                     />
                     <YAxis 
                     yAxisId="right" 

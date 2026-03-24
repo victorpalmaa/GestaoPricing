@@ -202,11 +202,14 @@ const PricingAnalytics = ({ user, setUser }) => {
       if (item.sku !== selectedSKU) return false;
       if (!item.code) return false;
       if (selectedClient && item.client_id !== selectedClient) return false;
+      if (selectedCategory && item.category !== selectedCategory) return false;
+      if (selectedSubcategory && item.subcategory !== selectedSubcategory) return false;
+      if (selectedSize && item.size !== selectedSize) return false;
       return true;
     });
 
     return [...new Set(matches.map(m => m.code))];
-  }, [pricingData, selectedClient, selectedSKU]);
+  }, [pricingData, selectedClient, selectedSKU, selectedCategory, selectedSubcategory, selectedSize]);
 
   // Filtrar dados localmente com base nas seleções
   const filteredPricingData = useMemo(() => {

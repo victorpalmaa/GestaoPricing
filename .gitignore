@@ -95,7 +95,6 @@ agenthub/agents/youtube/db
 .emergent/
 
 # Misc stray files and local tests
-{
 tests/
 
 # Mobile development

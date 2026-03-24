@@ -74,6 +74,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [leadToReject, setLeadToReject] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [showMoney, setShowMoney] = useState(false);
+  const [decisionEffect, setDecisionEffect] = useState({ visible: false, status: '', tokens: [], logoTokens: [] });
   const [editingLead, setEditingLead] = useState(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(null);
   const [statusMenuPos, setStatusMenuPos] = useState(null);
@@ -258,6 +259,14 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
   const openModal = (lead = null) => {
     setBasePriceId(''); // Reset base price selection
+    if (lead && !permissions?.canEdit) {
+      toast.error('Você não tem permissão para editar');
+      return;
+    }
+    if (!lead && !permissions?.canAdd) {
+      toast.error('Você não tem permissão para adicionar');
+      return;
+    }
     if (lead) {
       setEditingLead(lead);
       setFormData({
@@ -300,6 +309,16 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const isEdit = Boolean(editingLead);
+    if (isEdit && !permissions?.canEdit) {
+      toast.error('Você não tem permissão para editar');
+      return;
+    }
+    if (!isEdit && !permissions?.canAdd) {
+      toast.error('Você não tem permissão para adicionar');
+      return;
+    }
+
     setIsSubmitting(true);
     
     const leadData = {
@@ -412,6 +431,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   };
 
   const handleRejectionSubmit = async () => {
+    if (!permissions?.canEdit) {
+      toast.error('Você não tem permissão para editar');
+      return;
+    }
     if (!leadToReject || !rejectionReason) {
       toast.error('Selecione um motivo para a reprovação');
       return;
@@ -463,6 +486,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       };
       setLeads(leads.map(l => l.id === leadToReject.id ? updated : l));
       addNotification('update', `Lead reprovado: ${updated.cliente} - ${updated.sku}`, user?.id);
+      triggerDecisionEffect('rejected');
       toast.success('Lead reprovado');
       
       // 4. Limpar e fechar
@@ -477,11 +501,45 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   };
 
   const handleDelete = (id) => {
+    if (!permissions?.canDelete) {
+      toast.error('Você não tem permissão para excluir');
+      return;
+    }
     setLeadToDelete(id);
     setIsConfirmOpen(true);
   };
 
+  const triggerDecisionEffect = (status) => {
+    const tokens = status === 'approved'
+      ? Array.from({ length: 28 }, (_, idx) => ({
+          id: `${Date.now()}-${idx}`,
+          left: Math.random() * 100,
+          delay: Math.random() * 0.7,
+          duration: 1.4 + Math.random() * 1.3,
+          size: 14 + Math.random() * 18
+        }))
+      : [];
+    const logoTokens = status === 'approved'
+      ? Array.from({ length: 10 }, (_, idx) => ({
+          id: `logo-${Date.now()}-${idx}`,
+          left: Math.random() * 100,
+          delay: Math.random() * 0.8,
+          duration: 1.8 + Math.random() * 1.4,
+          size: 22 + Math.random() * 24
+        }))
+      : [];
+    setDecisionEffect({ visible: true, status, tokens, logoTokens });
+    setTimeout(() => {
+      setDecisionEffect({ visible: false, status: '', tokens: [], logoTokens: [] });
+    }, status === 'approved' ? 2600 : 900);
+  };
+
   const confirmDelete = () => {
+    if (!permissions?.canDelete) {
+      toast.error('Você não tem permissão para excluir');
+      setIsConfirmOpen(false);
+      return;
+    }
     if (leadToDelete) {
       (async () => {
         const { error } = await supabase
@@ -578,6 +636,58 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               />
             );
           })}
+        </div>
+      )}
+      {decisionEffect.visible && (
+        <div className="fixed inset-0 z-[70] pointer-events-none overflow-hidden">
+          <div className={decisionEffect.status === 'approved' ? "absolute inset-0 bg-emerald-500/10" : "absolute inset-0 bg-red-500/10"} />
+          {decisionEffect.status === 'approved' ? (
+            <>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <img
+                  src="/logo-pronutrition-symbol.png"
+                  alt="PRO Nutrition"
+                  className="w-36 h-36 object-contain drop-shadow-2xl pro-logo-spotlight"
+                />
+              </div>
+              {decisionEffect.tokens.map((token) => (
+                <span
+                  key={token.id}
+                  className="absolute top-[-10%] text-emerald-400 font-bold pro-dollar-fall"
+                  style={{
+                    left: `${token.left}%`,
+                    animationDelay: `${token.delay}s`,
+                    animationDuration: `${token.duration}s`,
+                    fontSize: `${token.size}px`
+                  }}
+                >
+                  $
+                </span>
+              ))}
+              {decisionEffect.logoTokens.map((token) => (
+                <img
+                  key={token.id}
+                  src="/logo-pronutrition-symbol.png"
+                  alt="PRO"
+                  className="absolute top-[-10%] object-contain opacity-90 pro-logo-fall"
+                  style={{
+                    left: `${token.left}%`,
+                    animationDelay: `${token.delay}s`,
+                    animationDuration: `${token.duration}s`,
+                    width: `${token.size}px`,
+                    height: `${token.size}px`
+                  }}
+                />
+              ))}
+            </>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center">
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/90 text-white pro-reject-pop">
+                  <XCircle className="w-5 h-5" />
+                <span className="font-semibold">Simulação Reprovada</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -859,13 +969,15 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
             {/* Actions */}
             <div className="relative flex items-center space-x-2">
-              <button
-                onClick={() => openModal()}
-                className="btn-primary flex items-center space-x-2 transition-transform hover:scale-105 active:scale-95"
-              >
-                <Plus size={20} />
-                <span>Novo Preço</span>
-              </button>
+              {permissions.canAdd && (
+                <button
+                  onClick={() => openModal()}
+                  className="btn-primary flex items-center space-x-2 transition-transform hover:scale-105 active:scale-95"
+                >
+                  <Plus size={20} />
+                  <span>Novo Preço</span>
+                </button>
+              )}
               <button
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
                 className="px-3 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 hover:bg-gray-100 dark:hover:bg-gray-800 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
@@ -1173,8 +1285,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                             };
                                             setLeads(leads.map(l => l.id === lead.id ? updated : l));
                                             if (opt.key === 'aprovado') {
-                                              setShowMoney(true);
-                                              setTimeout(() => setShowMoney(false), 2500);
+                                              triggerDecisionEffect('approved');
                                             }
                                             addNotification('update', `Status alterado: ${updated.cliente} - ${updated.status}`, user?.id);
                                             setStatusMenuOpen(null);
@@ -1552,6 +1663,32 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           </div>
         </div>
       )}
+      <style>{`
+        @keyframes proLogoSpotlight {
+          0% { transform: scale(0.62); opacity: 0; filter: brightness(1); }
+          18% { transform: scale(1.06); opacity: 1; filter: brightness(1.1); }
+          76% { transform: scale(1); opacity: 1; filter: brightness(1); }
+          100% { transform: scale(0.9); opacity: 0; filter: brightness(0.95); }
+        }
+        @keyframes proDollarFall {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+          10% { opacity: 1; }
+          100% { transform: translateY(120vh) rotate(360deg); opacity: 0; }
+        }
+        @keyframes proLogoFall {
+          0% { transform: translateY(-10vh) rotate(0deg) scale(0.75); opacity: 0; }
+          12% { opacity: 1; }
+          100% { transform: translateY(120vh) rotate(320deg) scale(1); opacity: 0; }
+        }
+        @keyframes proRejectPop {
+          0% { transform: scale(0.8); opacity: 0; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .pro-logo-spotlight { animation: proLogoSpotlight 2.4s ease-in-out forwards; }
+        .pro-dollar-fall { animation-name: proDollarFall; animation-timing-function: linear; animation-fill-mode: forwards; }
+        .pro-logo-fall { animation-name: proLogoFall; animation-timing-function: linear; animation-fill-mode: forwards; }
+        .pro-reject-pop { animation: proRejectPop 220ms ease-out; }
+      `}</style>
     </div>
   );
 };
