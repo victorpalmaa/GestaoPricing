@@ -925,7 +925,11 @@ const CS = ({ user }) => {
     const safeBaseDate = isValid(currentBaseDate) ? currentBaseDate : fallbackBaseDate;
 
     const updatedBaseDate = new Date(safeBaseDate);
-    updatedBaseDate.setMonth(targetNextValidity.getMonth(), targetNextValidity.getDate());
+    updatedBaseDate.setFullYear(
+      targetNextValidity.getFullYear(),
+      targetNextValidity.getMonth(),
+      targetNextValidity.getDate()
+    );
 
     if (!isValid(updatedBaseDate)) {
       toast.error('Não foi possível aplicar a data selecionada.');
@@ -1884,14 +1888,14 @@ const CS = ({ user }) => {
               <thead className="sticky top-0 z-20 text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/95 border-b border-gray-100 dark:border-gray-800">
                 <tr>
                   <th className="px-6 py-4 font-semibold text-center w-[180px]">Status do Reajuste</th>
-                  <th className="px-6 py-4 font-semibold">Cliente</th>
-                  <th className="px-6 py-4 font-semibold">Gestor</th>
-                  <th className="px-6 py-4 font-semibold">Código</th>
-                  <th className="px-6 py-4 font-semibold">SKU</th>
+                  <th className="px-4 py-4 font-semibold w-[170px]">Cliente</th>
+                  <th className="px-4 py-4 font-semibold w-[120px]">Gestor</th>
+                  <th className="px-4 py-4 font-semibold w-[110px]">Código</th>
+                  <th className="px-4 py-4 font-semibold min-w-[320px]">SKU</th>
                   <th className="px-6 py-4 font-semibold text-center">Gate</th>
                   <th className="px-6 py-4 font-semibold">Último Preço</th>
                   <th
-                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-4 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 w-[140px]"
                     onClick={() => requestSort('communicationDate')}
                   >
                     Próx. Comunicação
@@ -1900,7 +1904,7 @@ const CS = ({ user }) => {
                     )}
                   </th>
                   <th
-                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-4 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 w-[140px]"
                     onClick={() => requestSort('next_validity_date')}
                   >
                     Próx. Vigência
@@ -1909,7 +1913,7 @@ const CS = ({ user }) => {
                     )}
                   </th>
                   <th 
-                    className="px-6 py-4 font-semibold text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-4 py-4 font-semibold text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 w-[120px]"
                     onClick={() => requestSort('readjustment_pct')}
                   >
                     % Reajuste
@@ -1960,10 +1964,10 @@ const CS = ({ user }) => {
                           </SelectContent>
                         </Select>
                       </td>
-                      <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
+                      <td className="px-4 py-4 font-medium text-gray-900 dark:text-white">
                         {item.client_name}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {isPricingUser ? (
                           <Select
                             value={item.manager || ''}
@@ -1984,10 +1988,10 @@ const CS = ({ user }) => {
                           item.manager || '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300">
                         {item.code}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300 break-words">
                         {item.sku}
                       </td>
                       <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -2017,7 +2021,7 @@ const CS = ({ user }) => {
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300">
                         <div className="flex flex-col">
                           <span className="font-medium text-gray-900 dark:text-white">
                             {formatRowCurrency(item.gross_price, item.currency)}
@@ -2029,7 +2033,7 @@ const CS = ({ user }) => {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {isPricingUser ? (
                           <button
                             onClick={(e) => handleOpenDateEdit(e, item, 'communicationDate')}
@@ -2041,7 +2045,7 @@ const CS = ({ user }) => {
                           item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-4 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {isPricingUser ? (
                           <button
                             onClick={(e) => handleOpenDateEdit(e, item, 'next_validity_date')}
@@ -2053,7 +2057,7 @@ const CS = ({ user }) => {
                           item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-right font-medium">
+                      <td className="px-4 py-4 text-right font-medium">
                         <div className={`flex items-center justify-end gap-1 ${
                             item.readjustment_pct > 0 ? 'text-green-600 dark:text-green-400' : 
                             item.readjustment_pct < 0 ? 'text-red-600 dark:text-red-400' : 
@@ -2061,7 +2065,7 @@ const CS = ({ user }) => {
                         }`}>
                             {item.readjustment_pct > 0 ? <TrendingUp size={14} /> : 
                              item.readjustment_pct < 0 ? <TrendingDown size={14} /> : null}
-                            {item.readjustment_pct ? item.readjustment_pct.toFixed(2) : '0.00'}%
+                            {item.readjustment_pct ? item.readjustment_pct.toFixed(1) : '0.0'}%
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>

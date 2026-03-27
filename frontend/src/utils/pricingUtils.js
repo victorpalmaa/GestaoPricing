@@ -62,11 +62,14 @@ export const calculateContractInfo = (contract) => {
   today.setHours(0, 0, 0, 0); // Normalize today
   
   const currentYear = today.getFullYear();
-  let nextValidity = new Date(currentYear, month, contractDate.getDate());
-  
-  // If anniversary has already passed this year, next validity is next year
-  if (nextValidity < today) {
-     nextValidity = new Date(currentYear + 1, month, contractDate.getDate());
+  let nextValidity;
+  if (contractDate >= today) {
+    nextValidity = new Date(contractDate.getFullYear(), month, contractDate.getDate());
+  } else {
+    nextValidity = new Date(currentYear, month, contractDate.getDate());
+    if (nextValidity < today) {
+      nextValidity = new Date(currentYear + 1, month, contractDate.getDate());
+    }
   }
   
   const communicationDate = addDays(nextValidity, -30);

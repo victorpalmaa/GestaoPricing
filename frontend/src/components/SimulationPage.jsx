@@ -87,7 +87,20 @@ const SimulationPage = ({ user }) => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   
   const userArea = user?.area || user?.user_metadata?.area;
-  const isPricingUser = userArea === 'Pricing';
+  const normalizedUserArea = String(userArea || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s_-]+/g, '');
+  const isPricingUser = normalizedUserArea === 'pricing'
+    || normalizedUserArea === 'prevendas'
+    || normalizedUserArea === 'presales'
+    || normalizedUserArea === 'cs'
+    || normalizedUserArea === 'clientsuccess'
+    || normalizedUserArea === 'businessdev'
+    || normalizedUserArea === 'businessdevelopment';
+  const isPricingApprover = normalizedUserArea === 'pricing';
 
   // Fetch catalog/products from DB
   useEffect(() => {
@@ -539,7 +552,7 @@ const SimulationPage = ({ user }) => {
   };
 
   const handleReviewSimulation = async (status) => {
-    if (!selectedHistoryItem?.id || !isPricingUser || !user) return;
+    if (!selectedHistoryItem?.id || !isPricingApprover || !user) return;
     try {
       setReviewLoading(true);
       const payload = {
@@ -1496,7 +1509,7 @@ const SimulationPage = ({ user }) => {
                     </div>
                   </div>
                 </div>
-                {isPricingUser && (
+                {isPricingApprover && (
                   <div className="flex flex-wrap justify-end gap-2 pt-1">
                     <Button
                       onClick={() => handleReviewSimulation('rejected')}
