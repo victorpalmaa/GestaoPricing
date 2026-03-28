@@ -1378,11 +1378,9 @@ const CS = ({ user }) => {
                     className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500/20 outline-none h-[42px] transition-all appearance-none cursor-pointer"
                   >
                     <option value="">Todos Status</option>
-                    <option value="Em Análise">Em Análise</option>
-                    <option value="Comunicado">Comunicado</option>
-                    <option value="Em Negociação">Em Negociação</option>
-                    <option value="Aprovado">Aprovado</option>
-                    <option value="Implementado">Implementado</option>
+                    {WORKFLOW_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
                     <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">

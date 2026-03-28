@@ -98,6 +98,7 @@ export const calculateContractInfo = (contract) => {
 };
 
 export const WORKFLOW_STATUS_OPTIONS = [
+  { value: 'Não iniciado', label: 'Não iniciado', color: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300 border-slate-200 dark:border-slate-700' },
   { value: 'Em Análise', label: 'Em Análise', color: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-700' },
   { value: 'Comunicado', label: 'Comunicado', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800' },
   { value: 'Em Negociação', label: 'Em Negociação', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800' },
