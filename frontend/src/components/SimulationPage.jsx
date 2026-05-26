@@ -87,20 +87,7 @@ const SimulationPage = ({ user }) => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   
   const userArea = user?.area || user?.user_metadata?.area;
-  const normalizedUserArea = String(userArea || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s_-]+/g, '');
-  const isPricingUser = normalizedUserArea === 'pricing'
-    || normalizedUserArea === 'prevendas'
-    || normalizedUserArea === 'presales'
-    || normalizedUserArea === 'cs'
-    || normalizedUserArea === 'clientsuccess'
-    || normalizedUserArea === 'businessdev'
-    || normalizedUserArea === 'businessdevelopment';
-  const isPricingApprover = normalizedUserArea === 'pricing';
+  const isPricingUser = userArea === 'Pricing';
 
   // Fetch catalog/products from DB
   useEffect(() => {
@@ -340,64 +327,39 @@ const SimulationPage = ({ user }) => {
     const encargoRate = toRate(encargo);
     const ipiRate = toRate(ipi);
     const { fatorImp } = calculatePricingFactors({ pisRate, cofinsRate, icmsRate });
-    const referencePriceFromCatalog = Number(
-      selectedCatalogEntry?.catalog_gross_price
-      ?? selectedCatalogEntry?.catalog_price
-      ?? initialState.initialPrice
-      ?? 0
-    );
-    const referenceMarginFromCatalog = Number(
-      selectedCatalogEntry?.catalog_margin
-      ?? initialState.initialMargin
-      ?? NaN
-    );
-    const hasCatalogReferencePair = Number.isFinite(referencePriceFromCatalog)
-      && referencePriceFromCatalog > 0
-      && Number.isFinite(referenceMarginFromCatalog)
-      && referenceMarginFromCatalog > -100
-      && referenceMarginFromCatalog < 100;
-    const referenceCostFromCatalog = hasCatalogReferencePair
-      ? (referencePriceFromCatalog * (1 - (referenceMarginFromCatalog / 100)))
-      : NaN;
-    const hasCurrentReferencePair = Number.isFinite(priceNum)
-      && priceNum > 0
-      && Number.isFinite(marginNum)
-      && marginNum > -100
-      && marginNum < 100;
-    const referenceCostFromCurrent = hasCurrentReferencePair
-      ? (priceNum * (1 - (marginNum / 100)))
-      : NaN;
-    const referenceCost = mode === 'simularMargem'
-      ? (Number.isFinite(referenceCostFromCatalog) ? referenceCostFromCatalog : (Number.isFinite(referenceCostFromCurrent) ? referenceCostFromCurrent : costNum))
-      : (Number.isFinite(referenceCostFromCurrent) ? referenceCostFromCurrent : (Number.isFinite(referenceCostFromCatalog) ? referenceCostFromCatalog : costNum));
+    const catalogGross = Number(selectedCatalogEntry?.catalog_gross_price || 0);
+    const catalogNet = Number(selectedCatalogEntry?.catalog_price || 0);
+    const netFactorFromCatalog = catalogGross > 0 && catalogNet > 0 ? (catalogNet / catalogGross) : (1 - icmsRate);
 
     if (mode === 'simularMargem') {
-      const margemRate = marginNum / 100;
-      const margemDenominador = 1 - margemRate;
-      if (margemDenominador <= 0) {
-        setCalculationError('Margem inviável para os parâmetros atuais.');
-        return;
-      }
-      const suggestedPrice = referenceCost / margemDenominador;
-      if (Math.abs(suggestedPrice - priceNum) > 0.01) {
-        setPrice(suggestedPrice.toFixed(2));
-      }
-      if (Math.abs(suggestedPrice - Number(grossPrice)) > 0.01) {
-        setGrossPrice(suggestedPrice.toFixed(2));
-      }
-      setCalculationError('');
-    } else if (mode === 'simularPreco') {
-      const simulatedPrice = Number(grossPrice);
-      if (simulatedPrice <= 0) {
+      const grossNum = Number(grossPrice);
+      if (grossNum <= 0 || netFactorFromCatalog <= 0) {
         setCalculationError('');
         return;
       }
-      if (Math.abs(simulatedPrice - priceNum) > 0.01) {
-        setPrice(simulatedPrice.toFixed(2));
+      const netPrice = grossNum * netFactorFromCatalog;
+      if (Math.abs(netPrice - priceNum) > 0.01) {
+        setPrice(netPrice.toFixed(2));
       }
-      const calculatedMargin = ((simulatedPrice - referenceCost) / simulatedPrice) * 100;
+      const calculatedMargin = ((netPrice - costNum) / netPrice) * 100;
       if (Number.isFinite(calculatedMargin) && Math.abs(calculatedMargin - marginNum) > 0.01) {
         setMargin(calculatedMargin.toFixed(2));
+      }
+      setCalculationError('');
+    } else if (mode === 'simularPreco') {
+      const margemRate = marginNum / 100;
+      const margemDenominador = 1 - margemRate;
+      if (margemDenominador <= 0 || netFactorFromCatalog <= 0) {
+        setCalculationError('Margem inviável para os parâmetros atuais.');
+        return;
+      }
+      const netPrice = costNum / margemDenominador;
+      const grossFromNet = netPrice / netFactorFromCatalog;
+      if (Math.abs(netPrice - priceNum) > 0.01) {
+        setPrice(netPrice.toFixed(2));
+      }
+      if (Math.abs(grossFromNet - Number(grossPrice)) > 0.01) {
+        setGrossPrice(grossFromNet.toFixed(2));
       }
       setCalculationError('');
     } else if (mode === 'simularPrecoBruto') {
@@ -561,10 +523,7 @@ const SimulationPage = ({ user }) => {
   };
 
   const catalogMarginValue = Number(selectedCatalogEntry?.catalog_margin || 0);
-  const marginForDisplay = Number(margin || 0);
-  const priceForDisplay = mode === 'simularPrecoBruto'
-    ? Number(grossPrice || 0)
-    : Number(grossPrice || selectedCatalogEntry?.catalog_gross_price || selectedCatalogEntry?.catalog_price || 0);
+  const marginForDisplay = selectedCatalogEntry && !hasManualInput ? catalogMarginValue : Number(margin || 0);
 
   const getApprovalStatus = (item) => {
     const status = String(item?.approval_status || '').trim().toLowerCase();
@@ -580,7 +539,7 @@ const SimulationPage = ({ user }) => {
   };
 
   const handleReviewSimulation = async (status) => {
-    if (!selectedHistoryItem?.id || !isPricingApprover || !user) return;
+    if (!selectedHistoryItem?.id || !isPricingUser || !user) return;
     try {
       setReviewLoading(true);
       const payload = {
@@ -949,11 +908,11 @@ const SimulationPage = ({ user }) => {
                  </div>
                  <div className="space-y-1 md:col-span-2 md:text-right">
                     <Label className="text-xs text-muted-foreground">Preço</Label>
-                    <div className="font-medium">{formatCurrency(priceForDisplay)}</div>
+                    <div className="font-medium">{formatCurrency(selectedCatalogEntry?.catalog_gross_price ?? grossPrice ?? 0)}</div>
                  </div>
                  <div className="space-y-1 md:col-span-2 md:text-right">
                     <Label className="text-xs text-muted-foreground">Margem</Label>
-                    <div className="font-medium">{formatPercent(marginForDisplay)}</div>
+                    <div className="font-medium">{formatPercent(catalogMarginValue || marginForDisplay)}</div>
                  </div>
               </div>
 
@@ -1003,6 +962,24 @@ const SimulationPage = ({ user }) => {
                 {/* Dynamic Inputs based on Mode */}
                 {mode === 'simularMargem' ? (
                   <div className="space-y-2">
+                    <Label htmlFor="grossPrice">Preço bruto (novo)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-muted-foreground">R$</span>
+                      <Input 
+                        id="grossPrice" 
+                        type="number" 
+                        value={grossPrice} 
+                        onChange={(e) => {
+                          setHasManualInput(true);
+                          setGrossPrice(e.target.value);
+                        }}
+                        onBlur={(e) => handleBlur(setGrossPrice, e.target.value)}
+                        className="pl-8 font-semibold text-lg"
+                      />
+                    </div>
+                  </div>
+                ) : mode === 'simularPreco' ? (
+                  <div className="space-y-2">
                     <Label htmlFor="margin">Margem Alvo (%)</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-2.5 text-muted-foreground">%</span>
@@ -1015,24 +992,6 @@ const SimulationPage = ({ user }) => {
                           setMargin(e.target.value);
                         }}
                         onBlur={(e) => handleBlur(setMargin, e.target.value)}
-                        className="pl-8 font-semibold text-lg"
-                      />
-                    </div>
-                  </div>
-                ) : mode === 'simularPreco' ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="grossPrice">Preço novo</Label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-2.5 text-muted-foreground">R$</span>
-                      <Input 
-                        id="grossPrice" 
-                        type="number" 
-                        value={grossPrice} 
-                        onChange={(e) => {
-                          setHasManualInput(true);
-                          setGrossPrice(e.target.value);
-                        }}
-                        onBlur={(e) => handleBlur(setGrossPrice, e.target.value)}
                         className="pl-8 font-semibold text-lg"
                       />
                     </div>
@@ -1199,21 +1158,21 @@ const SimulationPage = ({ user }) => {
               {/* Main Result */}
               <div className="flex flex-col items-center justify-center p-8 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-slate-800 dark:to-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm">
                 <span className="text-gray-500 dark:text-slate-400 text-sm font-medium uppercase tracking-widest mb-3">
-                  {mode === 'simularMargem' ? 'Preço Sugerido' : 
-                   mode === 'simularPreco' ? 'Margem Resultante' : 
+                  {mode === 'simularMargem' ? 'Margem Bruta Resultante' : 
+                   mode === 'simularPreco' ? 'Preço Bruto Sugerido' : 
                    'Preço Bruto Calculado'}
                 </span>
                 <div className="text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
                   {mode === 'simularMargem' ? (
-                    <span className="text-[#845AFA]">
-                      {formatCurrency(Number(grossPrice))}
-                    </span>
-                  ) : mode === 'simularPreco' ? (
                     isPricingUser ? (
                       <span className={marginForDisplay < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
                         {formatPercent(marginForDisplay)}
                       </span>
                     ) : '***'
+                  ) : mode === 'simularPreco' ? (
+                    <span className="text-[#845AFA]">
+                      {formatCurrency(Number(grossPrice))}
+                    </span>
                   ) : (
                     <span className="text-[#845AFA]">
                       {formatCurrency(Number(grossPrice))}
@@ -1238,7 +1197,7 @@ const SimulationPage = ({ user }) => {
                    </div>
                 )}
                 
-                {!isPricingUser && mode === 'simularPreco' && (
+                {!isPricingUser && mode === 'simularMargem' && (
                   <Badge variant="outline" className="mt-4 border-yellow-200 bg-yellow-50 text-yellow-700">
                     Restrito ao Pricing
                   </Badge>
@@ -1537,7 +1496,7 @@ const SimulationPage = ({ user }) => {
                     </div>
                   </div>
                 </div>
-                {isPricingApprover && (
+                {isPricingUser && (
                   <div className="flex flex-wrap justify-end gap-2 pt-1">
                     <Button
                       onClick={() => handleReviewSimulation('rejected')}

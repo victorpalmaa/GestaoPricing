@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, cn } from '@/lib/utils';
-import { addDays, format, subDays } from 'date-fns';
+import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -159,6 +159,24 @@ const PricingDashboard = ({ user }) => {
     if (bCreated !== aCreated) return bCreated - aCreated;
 
     return String(b.id).localeCompare(String(a.id));
+  };
+
+  const setCurrentPriceForSku = async ({ clientId, sku, currentId }) => {
+    const { error: clearError } = await supabase
+      .from('pricing_history')
+      .update({ is_current: false })
+      .eq('client_id', clientId)
+      .eq('sku', sku)
+      .neq('id', currentId);
+
+    if (clearError) throw clearError;
+
+    const { error: setError } = await supabase
+      .from('pricing_history')
+      .update({ is_current: true })
+      .eq('id', currentId);
+
+    if (setError) throw setError;
   };
 
   const safePricingData = pricingData || [];
@@ -846,48 +864,8 @@ const PricingDashboard = ({ user }) => {
         })
       };
 
-      const { data: sameSkuRows, error: sameSkuError } = await supabase
-        .from('pricing_history')
-        .select('id, sku, date, client_id, created_at, updated_at')
-        .eq('client_id', priceData.client_id)
-        .eq('sku', priceData.sku);
-
-      if (sameSkuError) throw sameSkuError;
-
-      const comparableRows = (sameSkuRows || []).filter(row => row.id !== editingId);
-      const sortedComparableRows = comparableRows.sort((a, b) => {
-        const bDate = new Date(`${b.date}T12:00:00`).getTime();
-        const aDate = new Date(`${a.date}T12:00:00`).getTime();
-        if (bDate !== aDate) return bDate - aDate;
-
-        const bUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-        const aUpdated = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-        if (bUpdated !== aUpdated) return bUpdated - aUpdated;
-
-        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
-        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
-        if (bCreated !== aCreated) return bCreated - aCreated;
-
-        return String(b.id).localeCompare(String(a.id));
-      });
-
-      const originalItem = editingId ? pricingData.find(item => item.id === editingId) : null;
-      const skuChanged = Boolean(originalItem && originalItem.sku?.trim().toUpperCase() !== priceData.sku);
-      const latestConflict = sortedComparableRows[0];
-
-      if (latestConflict) {
-        if (skuChanged) {
-          toast.warning('Este SKU já possui preço vigente para este cliente. O registro salvo poderá ficar como histórico.');
-        }
-
-        const latestDate = new Date(`${latestConflict.date}T12:00:00`).getTime();
-        const newDate = new Date(`${priceData.date}T12:00:00`).getTime();
-        if (newDate <= latestDate) {
-          toast.warning('Já existe preço vigente mais recente para este SKU e cliente. Um SKU não pode ter dois preços vigentes.');
-        }
-      }
-
       let error;
+      let savedRowId = editingId;
       
       if (editingId) {
         const { error: updateError } = await supabase
@@ -896,13 +874,25 @@ const PricingDashboard = ({ user }) => {
           .eq('id', editingId);
         error = updateError;
       } else {
-        const { error: insertError } = await supabase
+        const { data: insertedRow, error: insertError } = await supabase
           .from('pricing_history')
-          .insert(priceData);
+          .insert(priceData)
+          .select('id')
+          .single();
         error = insertError;
+        savedRowId = insertedRow?.id || null;
       }
 
       if (error) throw error;
+
+      // Regra de vigência: novo preço cadastrado para o mesmo SKU/cliente vira o atual.
+      if (!editingId && savedRowId) {
+        await setCurrentPriceForSku({
+          clientId: priceData.client_id,
+          sku: priceData.sku,
+          currentId: savedRowId
+        });
+      }
 
       toast.success(editingId ? 'Preço atualizado com sucesso!' : 'Preço cadastrado com sucesso!');
       addNotification('pricing', editingId ? `Preço atualizado para SKU ${priceData.sku}` : `Novo preço cadastrado para SKU ${priceData.sku}`, user?.id);
@@ -1004,32 +994,18 @@ const PricingDashboard = ({ user }) => {
           return;
         }
 
-        const targetDate = subDays(parsePricingDate(nextCurrent.date) || new Date(), 1);
-        const { error: updateError } = await supabase
-          .from('pricing_history')
-          .update({
-            date: targetDate.toISOString().split('T')[0],
-            month: format(targetDate, 'MMM/yy', { locale: ptBR }),
-            gate: calculateGate(targetDate.getMonth())
-          })
-          .eq('id', item.id);
-
-        if (updateError) throw updateError;
+        await setCurrentPriceForSku({
+          clientId: item.client_id,
+          sku: item.sku,
+          currentId: nextCurrent.id
+        });
         toast.success('Preço movido para histórico com sucesso.');
       } else {
-        const currentRow = sortedRows[0];
-        const targetDate = addDays(parsePricingDate(currentRow?.date) || new Date(), 1);
-
-        const { error: updateError } = await supabase
-          .from('pricing_history')
-          .update({
-            date: targetDate.toISOString().split('T')[0],
-            month: format(targetDate, 'MMM/yy', { locale: ptBR }),
-            gate: calculateGate(targetDate.getMonth())
-          })
-          .eq('id', item.id);
-
-        if (updateError) throw updateError;
+        await setCurrentPriceForSku({
+          clientId: item.client_id,
+          sku: item.sku,
+          currentId: item.id
+        });
         toast.success('Preço marcado como vigente com sucesso.');
       }
 
@@ -1138,16 +1114,16 @@ const PricingDashboard = ({ user }) => {
                   <Upload size={18} />
                   Importar Excel
                 </button>
-                <button
-                  onClick={() => navigate('/pricing/analytics')}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white"
-                  style={{ backgroundColor: 'var(--color-primary)' }}
-                >
-                  <BarChart3 size={18} />
-                  Ver Dashboards/Análises
-                </button>
               </>
             )}
+            <button
+              onClick={() => navigate('/pricing/analytics')}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white"
+              style={{ backgroundColor: 'var(--color-primary)' }}
+            >
+              <BarChart3 size={18} />
+              Ver Dashboards/Análises
+            </button>
           </div>
           
           {/* Botões à direita: Exportar e Gerenciar Depara */}
