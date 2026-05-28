@@ -342,12 +342,12 @@ const CatalogoPro = ({ user }) => {
       const requiredHeaders = [
         ['ID', 'id'],
         ['SKU', 'sku'],
-        ['Categoria', 'categoria', 'category'],
         ['Custo', 'custo'],
         ['Margem', 'margem'],
         ['Preço Líquido', 'Preco Liquido', 'Preco Líquido', 'preco liquido'],
         ['Preço Bruto', 'Preco Bruto', 'Preco bruto', 'preco bruto'],
         ['Volume', 'volume'],
+        ['Categoria', 'categoria', 'category'],
       ];
 
       const firstRow = jsonRows[0] || {};
@@ -365,17 +365,10 @@ const CatalogoPro = ({ user }) => {
       }
 
       const existingBySkuVolume = new Map();
-      const existingBySimulationVolume = new Map();
-      const existingByCodeVolume = new Map();
 
       sortedCatalogRows.forEach((row) => {
         const skuKey = `${normalizeText(row?.sku)}::${Number(row?.volume || 0)}`;
-        const simulationKey = `${normalizeText(row?.simulation_id)}::${Number(row?.volume || 0)}`;
-        const codeKey = `${normalizeText(row?.datasul_code)}::${Number(row?.volume || 0)}`;
-
         if (!existingBySkuVolume.has(skuKey)) existingBySkuVolume.set(skuKey, row);
-        if (row?.simulation_id && !existingBySimulationVolume.has(simulationKey)) existingBySimulationVolume.set(simulationKey, row);
-        if (row?.datasul_code && !existingByCodeVolume.has(codeKey)) existingByCodeVolume.set(codeKey, row);
       });
 
       let successCount = 0;
@@ -390,8 +383,6 @@ const CatalogoPro = ({ user }) => {
         const marginRaw = getValueByHeader(row, ['Margem', 'margem']);
         const priceRaw = getValueByHeader(row, ['Preço Líquido', 'Preco Liquido', 'Preco Líquido', 'preco liquido']);
         const grossPriceRaw = getValueByHeader(row, ['Preço Bruto', 'Preco Bruto', 'Preco bruto', 'preco bruto']);
-        const optionalDatasulCode = getValueByHeader(row, ['Código', 'Codigo', 'datasul_code', 'Datasul Code']);
-
         const sku = String(skuRaw || '').trim();
         const category = CATEGORY_OPTIONS.find((item) => normalizeText(item) === normalizeText(categoryRaw)) || '';
         const simulationId = String(simulationIdRaw || '').trim();
@@ -401,7 +392,7 @@ const CatalogoPro = ({ user }) => {
         const catalogPrice = parseNumber(priceRaw);
         const catalogGrossPrice = parseNumber(grossPriceRaw);
 
-        if (!sku || !category || !VOLUMES.includes(volume)) {
+        if (!simulationId || !sku || !category || !VOLUMES.includes(volume)) {
           errorCount += 1;
           continue;
         }
@@ -411,22 +402,9 @@ const CatalogoPro = ({ user }) => {
           continue;
         }
 
-        const datasulCode = String(optionalDatasulCode || '').trim();
-        const inferredRow =
-          existingByCodeVolume.get(`${normalizeText(datasulCode)}::${volume}`) ||
-          existingBySkuVolume.get(`${normalizeText(sku)}::${volume}`) ||
-          existingBySimulationVolume.get(`${normalizeText(simulationId)}::${volume}`) ||
-          existingByCodeVolume.get(`${normalizeText(simulationId)}::${volume}`);
-
-        const resolvedDatasulCode = datasulCode || inferredRow?.datasul_code || '';
-
-        if (!resolvedDatasulCode) {
-          errorCount += 1;
-          continue;
-        }
+        const existingRow = existingBySkuVolume.get(`${normalizeText(sku)}::${volume}`);
 
         const payload = {
-          datasul_code: resolvedDatasulCode,
           sku,
           volume,
           category,
@@ -437,9 +415,13 @@ const CatalogoPro = ({ user }) => {
           catalog_gross_price: catalogGrossPrice,
         };
 
+        if (existingRow?.datasul_code) {
+          payload.datasul_code = existingRow.datasul_code;
+        }
+
         const { error } = await supabase
           .from('simulation_catalog_prices')
-          .upsert(payload, { onConflict: 'datasul_code,volume' });
+          .upsert(payload, { onConflict: 'sku,volume' });
 
         if (error) {
           console.error('Erro no upsert do catálogo:', error, payload);
@@ -548,12 +530,26 @@ const CatalogoPro = ({ user }) => {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent border-gray-200 dark:border-gray-800">
-              <TableHead className="min-w-[120px]">ID</TableHead>
-              <TableHead className="min-w-[260px]">SKU</TableHead>
-              <TableHead>Volume</TableHead>
-              <TableHead>Margem</TableHead>
-              <TableHead>Preço Líquido</TableHead>
-              <TableHead>Preço Bruto</TableHead>
+              {isPricingUser ? (
+                <>
+                  <TableHead className="min-w-[120px]">ID</TableHead>
+                  <TableHead className="min-w-[260px]">SKU</TableHead>
+                  <TableHead>Custo</TableHead>
+                  <TableHead>Margem</TableHead>
+                  <TableHead>Preço Líquido</TableHead>
+                  <TableHead>Preço Bruto</TableHead>
+                  <TableHead>Volume</TableHead>
+                  <TableHead>Categoria</TableHead>
+                </>
+              ) : (
+                <>
+                  <TableHead className="min-w-[260px]">SKU</TableHead>
+                  <TableHead>Volume</TableHead>
+                  <TableHead>Preço Líquido</TableHead>
+                  <TableHead>Preço Bruto</TableHead>
+                  <TableHead>Categoria</TableHead>
+                </>
+              )}
               {isPricingUser && <TableHead className="text-right">Ações</TableHead>}
             </TableRow>
           </TableHeader>
@@ -561,7 +557,7 @@ const CatalogoPro = ({ user }) => {
             {rows.length === 0 ? (
               <TableRow className="border-gray-200 dark:border-gray-800">
                 <TableCell
-                  colSpan={isPricingUser ? 7 : 6}
+                  colSpan={isPricingUser ? 9 : 5}
                   className="h-24 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   {emptyMessage}
@@ -576,24 +572,52 @@ const CatalogoPro = ({ user }) => {
                     key={row?.id || `${row?.sku || 'sku'}-${row?.volume || index}`}
                     className="border-gray-200 dark:border-gray-800 hover:bg-gray-50/70 dark:hover:bg-gray-900/30"
                   >
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {row?.simulation_id || '—'}
-                    </TableCell>
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {row?.sku || '—'}
-                    </TableCell>
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {formatVolume(row?.volume)}
-                    </TableCell>
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {isMissing ? '—' : formatPercent(row?.catalog_margin)}
-                    </TableCell>
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {isMissing ? '—' : formatCurrency(row?.catalog_price)}
-                    </TableCell>
-                    <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
-                      {isMissing ? '—' : formatCurrency(row?.catalog_gross_price)}
-                    </TableCell>
+                    {isPricingUser ? (
+                      <>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {row?.simulation_id || '—'}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {row?.sku || '—'}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatCurrency(row?.catalog_cost)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatPercent(row?.catalog_margin)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatCurrency(row?.catalog_price)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatCurrency(row?.catalog_gross_price)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {formatVolume(row?.volume)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {row?.category || '—'}
+                        </TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {row?.sku || '—'}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {formatVolume(row?.volume)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatCurrency(row?.catalog_price)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {isMissing ? '—' : formatCurrency(row?.catalog_gross_price)}
+                        </TableCell>
+                        <TableCell className={isMissing ? 'text-gray-400 dark:text-gray-500' : ''}>
+                          {row?.category || '—'}
+                        </TableCell>
+                      </>
+                    )}
                     {isPricingUser && (
                       <TableCell className="text-right">
                         {!isMissing && row?.id ? (
@@ -758,14 +782,6 @@ const CatalogoPro = ({ user }) => {
         )}
 
         {mode && renderToolbar()}
-
-        {loading && (
-          <Card className="bg-white dark:bg-[#0a0a0a] border-gray-200 dark:border-gray-800">
-            <CardContent className="py-12 text-center text-sm text-gray-500 dark:text-gray-400">
-              Carregando catálogo...
-            </CardContent>
-          </Card>
-        )}
 
         {!loading && errorMessage && (
           <Card className="bg-white dark:bg-[#0a0a0a] border-gray-200 dark:border-gray-800">
@@ -966,17 +982,22 @@ const CatalogoPro = ({ user }) => {
             </div>
 
             <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
-              <p className="font-medium text-gray-900 dark:text-white">Formato esperado das colunas:</p>
+              <p className="font-medium text-gray-900 dark:text-white">
+                A ordem das colunas deve ser exatamente esta:
+              </p>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <p>- ID</p>
-                <p>- Custo</p>
                 <p>- SKU</p>
+                <p>- Custo</p>
                 <p>- Margem</p>
-                <p>- Categoria</p>
                 <p>- Preço Líquido</p>
-                <p>- Volume</p>
                 <p>- Preço Bruto</p>
+                <p>- Volume</p>
+                <p>- Categoria</p>
               </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Se a ordem estiver diferente, a importação pode falhar ou ignorar linhas.
+              </p>
             </div>
           </div>
 

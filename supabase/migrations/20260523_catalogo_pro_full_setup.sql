@@ -4,7 +4,6 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.simulation_catalog_prices (
   id uuid primary key default gen_random_uuid(),
-  datasul_code text not null,
   sku text not null,
   category text,
   volume integer not null,
@@ -15,11 +14,10 @@ create table if not exists public.simulation_catalog_prices (
   simulation_id text,
   created_at timestamptz default now() not null,
   updated_at timestamptz default now() not null,
-  unique (datasul_code, volume)
+  unique (sku, volume)
 );
 
 alter table public.simulation_catalog_prices
-  add column if not exists datasul_code text,
   add column if not exists sku text,
   add column if not exists category text,
   add column if not exists volume integer,
@@ -31,10 +29,32 @@ alter table public.simulation_catalog_prices
   add column if not exists created_at timestamptz default now(),
   add column if not exists updated_at timestamptz default now();
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'simulation_catalog_prices'
+      and column_name = 'datasul_code'
+  ) then
+    execute 'alter table public.simulation_catalog_prices alter column datasul_code drop not null';
+  end if;
+end $$;
+
 alter table public.simulation_catalog_prices
-  alter column datasul_code set not null,
   alter column sku set not null,
   alter column volume set not null;
+
+alter table public.simulation_catalog_prices
+  drop constraint if exists simulation_catalog_prices_datasul_code_volume_key;
+
+alter table public.simulation_catalog_prices
+  drop constraint if exists simulation_catalog_prices_sku_volume_key;
+
+alter table public.simulation_catalog_prices
+  add constraint simulation_catalog_prices_sku_volume_key
+  unique (sku, volume);
 
 alter table public.simulation_catalog_prices
   drop constraint if exists simulation_catalog_prices_volume_check;
@@ -50,8 +70,10 @@ alter table public.simulation_catalog_prices
   add constraint simulation_catalog_prices_category_check
   check (category is null or category in ('Pó', 'Gel', 'Goma', 'Softgel'));
 
-create unique index if not exists uq_simulation_catalog_prices_datasul_volume
-  on public.simulation_catalog_prices (datasul_code, volume);
+drop index if exists public.uq_simulation_catalog_prices_datasul_volume;
+
+create unique index if not exists uq_simulation_catalog_prices_sku_volume
+  on public.simulation_catalog_prices (sku, volume);
 
 create index if not exists idx_simulation_catalog_prices_lower_sku
   on public.simulation_catalog_prices (lower(sku));
