@@ -33,9 +33,11 @@ import {
 // MOCK DATA for Simulation
 const MOCK_CATALOG_PRODUCTS = [
   { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 1000, catalog_cost: 21.3, catalog_price: 29.9, catalog_gross_price: 33.22, catalog_margin: 28.76 },
+  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 1500, catalog_cost: 21.0, catalog_price: 29.4, catalog_gross_price: 32.67, catalog_margin: 28.57 },
   { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 3000, catalog_cost: 20.8, catalog_price: 28.9, catalog_gross_price: 32.11, catalog_margin: 28.03 },
   { datasul_code: '900001', sku: 'CIMED - Lavitan Colágeno Verisol Hibisco e Limão - Pote 300g', volume: 5000, catalog_cost: 20.1, catalog_price: 27.8, catalog_gross_price: 30.89, catalog_margin: 27.7 },
   { datasul_code: '900045', sku: 'Calm Gut- Pote 175g', volume: 1000, catalog_cost: 32.5, catalog_price: 43.7, catalog_gross_price: 48.56, catalog_margin: 25.63 },
+  { datasul_code: '900045', sku: 'Calm Gut- Pote 175g', volume: 1500, catalog_cost: 31.9, catalog_price: 42.9, catalog_gross_price: 47.67, catalog_margin: 25.64 },
   { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 3000, catalog_cost: 31.4, catalog_price: 42.1, catalog_gross_price: 46.78, catalog_margin: 25.42 },
   { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 5000, catalog_cost: 30.8, catalog_price: 41.4, catalog_gross_price: 46.0, catalog_margin: 25.6 },
 ];
@@ -48,7 +50,7 @@ const SimulationPage = ({ user }) => {
   // State from navigation
   const initialState = location.state || {};
   
-  const [selectedProductSku, setSelectedProductSku] = useState(initialState.code || initialState.sku || '');
+  const [selectedProductSku, setSelectedProductSku] = useState(initialState.sku || initialState.code || '');
   const [selectedVolume, setSelectedVolume] = useState(initialState.volume ? String(initialState.volume) : '');
   const [sku, setSku] = useState(initialState.sku || '');
   const [productName, setProductName] = useState(initialState.productName || '');
@@ -114,54 +116,71 @@ const SimulationPage = ({ user }) => {
   const productOptions = useMemo(() => {
     const grouped = new Map();
     (catalogProducts || []).forEach(item => {
-      const code = item.datasul_code ? String(item.datasul_code).trim() : '';
-      if (!code) return;
-      if (!grouped.has(code)) {
-        grouped.set(code, { code, skuNames: new Set() });
+      const skuName = item.sku ? String(item.sku).trim() : '';
+      if (!skuName) return;
+      if (!grouped.has(skuName)) {
+        grouped.set(skuName, { sku: skuName, codes: new Set() });
       }
-      if (item.sku) {
-        grouped.get(code).skuNames.add(item.sku);
+      if (item.datasul_code) {
+        grouped.get(skuName).codes.add(String(item.datasul_code).trim());
       }
     });
 
     return Array.from(grouped.values()).map(item => {
-      const names = Array.from(item.skuNames);
-      const primaryName = names[0] || item.code;
+      const codes = Array.from(item.codes).filter(Boolean);
       return {
-        value: item.code,
-        label: `${primaryName} (${item.code})`,
-        keywords: `${primaryName} ${item.code} ${names.join(' ')}`
+        value: item.sku,
+        label: item.sku,
+        keywords: `${item.sku} ${codes.join(' ')}`
       };
     });
   }, [catalogProducts]);
 
   const volumeOptions = useMemo(() => {
     if (!selectedProductSku) {
-      return ['1000', '3000', '5000'];
+      return ['1000', '1500', '3000', '5000'];
     }
     const volumes = [...new Set(
       (catalogProducts || [])
-        .filter(item => String(item.datasul_code || '').trim() === String(selectedProductSku).trim())
+        .filter(item => String(item.sku || '').trim() === String(selectedProductSku).trim())
         .map(item => String(item.volume || '').trim())
         .filter(Boolean)
     )].sort((a, b) => Number(a) - Number(b));
-    return volumes.length > 0 ? volumes : ['1000', '3000', '5000'];
+    return volumes.length > 0 ? volumes : ['1000', '1500', '3000', '5000'];
   }, [catalogProducts, selectedProductSku]);
 
   const selectedCatalogEntry = useMemo(() => {
     if (!selectedProductSku || !selectedVolume) return null;
     return (catalogProducts || []).find(item =>
-      String(item.datasul_code || '').trim() === String(selectedProductSku).trim()
+      String(item.sku || '').trim() === String(selectedProductSku).trim()
       && String(item.volume || '').trim() === String(selectedVolume).trim()
     ) || null;
   }, [catalogProducts, selectedProductSku, selectedVolume]);
+
+  useEffect(() => {
+    if (!selectedProductSku || (catalogProducts || []).length === 0) return;
+    const hasSkuMatch = (catalogProducts || []).some(item =>
+      String(item.sku || '').trim() === String(selectedProductSku).trim()
+    );
+    if (hasSkuMatch) return;
+
+    const matchByCode = (catalogProducts || []).find(item =>
+      String(item.datasul_code || '').trim() === String(selectedProductSku).trim()
+    );
+
+    if (matchByCode?.sku) {
+      setSelectedProductSku(matchByCode.sku);
+      setSku(matchByCode.sku);
+      setProductName(matchByCode.sku);
+    }
+  }, [catalogProducts, selectedProductSku]);
 
   // Handle product selection
   const handleProductSelect = (selectedCode) => {
     setSelectedProductSku(selectedCode);
     setSelectedVolume('');
     const firstMatch = (catalogProducts || []).find(item =>
-      String(item.datasul_code || '').trim() === String(selectedCode || '').trim()
+      String(item.sku || '').trim() === String(selectedCode || '').trim()
     );
     if (firstMatch?.sku) {
       setSku(firstMatch.sku);
@@ -407,7 +426,7 @@ const SimulationPage = ({ user }) => {
         .insert({
           user_id: user.id,
           sku: sku || 'N/A',
-          datasul_code: selectedProductSku || null,
+          datasul_code: selectedCatalogEntry?.datasul_code || null,
           volume: selectedVolume ? Number(selectedVolume) : null,
           product_name: productName || 'Simulação Avulsa',
           price: parsedPrice,
@@ -730,9 +749,15 @@ const SimulationPage = ({ user }) => {
   };
 
   const formatPercent = (val) => {
-    const num = Number(val);
-    if (isNaN(num)) return '0,00%';
-    return new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num / 100);
+    if (val === null || val === undefined || val === '') return '0%';
+    const normalized = String(val).trim().replace(/\s+/g, '').replace('%', '').replace(',', '.');
+    const num = Number(normalized);
+    if (Number.isNaN(num)) return '0%';
+    const percentageValue = Math.abs(num) <= 1 ? num * 100 : num;
+    return `${new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    }).format(percentageValue)}%`;
   };
 
   const formatCurrencyInput = (value) => {

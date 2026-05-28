@@ -31,6 +31,13 @@ drop index if exists public.uq_simulation_catalog_prices_datasul_volume;
 create unique index if not exists uq_simulation_catalog_prices_sku_volume
   on public.simulation_catalog_prices (sku, volume);
 
+alter table public.simulation_catalog_prices
+  drop constraint if exists simulation_catalog_prices_volume_check;
+
+alter table public.simulation_catalog_prices
+  add constraint simulation_catalog_prices_volume_check
+  check (volume in (1000, 1500, 3000, 5000));
+
 alter table public.simulation_catalog_prices enable row level security;
 
 grant select, insert, update, delete on table public.simulation_catalog_prices to authenticated;

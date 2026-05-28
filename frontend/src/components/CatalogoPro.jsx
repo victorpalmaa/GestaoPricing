@@ -38,7 +38,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-const VOLUMES = [1000, 3000, 5000];
+const VOLUMES = [1000, 1500, 3000, 5000];
 const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Goma', 'Softgel'];
 
 const normalizeText = (value) =>
@@ -77,8 +77,8 @@ const formatCurrency = (value) => {
 
 const formatPercent = (value) => {
   if (value === null || value === undefined || value === '') return '—';
-  const number = Number(value);
-  if (Number.isNaN(number)) return '—';
+  const number = parseNumber(value);
+  if (number === null) return '—';
   const percentageValue = Math.abs(number) <= 1 ? number * 100 : number;
   return `${new Intl.NumberFormat('pt-BR', {
     minimumFractionDigits: 0,
@@ -997,7 +997,8 @@ const CatalogoPro = ({ user }) => {
                 <p>- Categoria</p>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Se a ordem estiver diferente, a importação pode falhar ou ignorar linhas.
+                Se a ordem estiver diferente, a importação pode falhar ou ignorar linhas. Volumes aceitos:
+                `1000`, `1500`, `3000` e `5000`.
               </p>
             </div>
           </div>

@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.simulation_catalog_prices (
   id uuid primary key default gen_random_uuid(),
+  datasul_code text,
   sku text not null,
   category text,
   volume integer not null,
@@ -13,11 +14,11 @@ create table if not exists public.simulation_catalog_prices (
   catalog_margin numeric default 0,
   simulation_id text,
   created_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null,
-  unique (sku, volume)
+  updated_at timestamptz default now() not null
 );
 
 alter table public.simulation_catalog_prices
+  add column if not exists datasul_code text,
   add column if not exists sku text,
   add column if not exists category text,
   add column if not exists volume integer,
@@ -56,12 +57,18 @@ alter table public.simulation_catalog_prices
   add constraint simulation_catalog_prices_sku_volume_key
   unique (sku, volume);
 
+drop index if exists public.uq_simulation_catalog_prices_datasul_volume;
+drop index if exists public.uq_simulation_catalog_prices_sku_volume;
+
+create unique index if not exists uq_simulation_catalog_prices_sku_volume
+  on public.simulation_catalog_prices (sku, volume);
+
 alter table public.simulation_catalog_prices
   drop constraint if exists simulation_catalog_prices_volume_check;
 
 alter table public.simulation_catalog_prices
   add constraint simulation_catalog_prices_volume_check
-  check (volume in (1000, 3000, 5000));
+  check (volume in (1000, 1500, 3000, 5000));
 
 alter table public.simulation_catalog_prices
   drop constraint if exists simulation_catalog_prices_category_check;
@@ -69,11 +76,6 @@ alter table public.simulation_catalog_prices
 alter table public.simulation_catalog_prices
   add constraint simulation_catalog_prices_category_check
   check (category is null or category in ('Pó', 'Gel', 'Goma', 'Softgel'));
-
-drop index if exists public.uq_simulation_catalog_prices_datasul_volume;
-
-create unique index if not exists uq_simulation_catalog_prices_sku_volume
-  on public.simulation_catalog_prices (sku, volume);
 
 create index if not exists idx_simulation_catalog_prices_lower_sku
   on public.simulation_catalog_prices (lower(sku));
@@ -183,7 +185,7 @@ alter table public.simulations_history
 
 alter table public.simulations_history
   add constraint simulations_history_volume_check
-  check (volume is null or volume in (1000, 3000, 5000));
+  check (volume is null or volume in (1000, 1500, 3000, 5000));
 
 alter table public.simulations_history enable row level security;
 
