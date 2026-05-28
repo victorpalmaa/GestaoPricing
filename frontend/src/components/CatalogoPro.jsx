@@ -79,10 +79,11 @@ const formatPercent = (value) => {
   if (value === null || value === undefined || value === '') return '—';
   const number = Number(value);
   if (Number.isNaN(number)) return '—';
+  const percentageValue = Math.abs(number) <= 1 ? number * 100 : number;
   return `${new Intl.NumberFormat('pt-BR', {
-    minimumFractionDigits: 2,
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(number)}%`;
+  }).format(percentageValue)}%`;
 };
 
 const formatVolume = (value) => {
