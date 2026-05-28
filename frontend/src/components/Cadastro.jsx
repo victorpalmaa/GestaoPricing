@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
-const allowedAreas = ['Pricing', 'Pré-vendas', 'CS'];
 import { User, Mail, Lock, Building2, Eye, EyeOff } from 'lucide-react';
+
+const allowedAreas = [
+  { value: 'Pricing', label: 'Data' },
+  { value: 'Pré-vendas', label: 'New Business' },
+  { value: 'CS', label: 'Business Development' },
+];
 
 const Cadastro = ({ setUser }) => {
   const navigate = useNavigate();
@@ -181,8 +186,8 @@ const Cadastro = ({ setUser }) => {
                 >
                   <option value="">Selecione sua área</option>
                   {allowedAreas.map((area) => (
-                    <option key={area} value={area}>
-                      {area}
+                    <option key={area.value} value={area.value}>
+                      {area.label}
                     </option>
                   ))}
                 </select>

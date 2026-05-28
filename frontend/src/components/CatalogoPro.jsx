@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import {
   ArrowLeft,
   Download,
+  Info,
+  Map as MapIcon,
   Package,
   Pencil,
   Search,
@@ -37,6 +39,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
 const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Goma', 'Softgel'];
@@ -694,6 +701,61 @@ const CatalogoPro = ({ user }) => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors h-[38px]">
+                  <MapIcon className="w-3.5 h-3.5" />
+                  Parâmetros do Catálogo
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[320px] p-0 bg-white dark:bg-[#171717] border border-gray-200 dark:border-gray-800 shadow-xl overflow-hidden">
+                <div className="bg-gray-50 dark:bg-gray-900/50 px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
+                  <div className="p-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-md">
+                    <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100">Parâmetros do Catálogo</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Referência utilizada no catálogo</p>
+                  </div>
+                </div>
+                <div className="p-4 space-y-4">
+                  <div className="space-y-2">
+                    <h5 className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                      Parâmetros fiscais e logísticos
+                    </h5>
+                    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-xs space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Frete</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">FOB</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">PIS e COFINS</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">9,25%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">ICMS</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">12%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h5 className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                      Validade dos preços
+                    </h5>
+                    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-xs space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Válidos até</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">31/08/2026</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+
             <Button
               variant="outline"
               className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800"

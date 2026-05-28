@@ -7,7 +7,7 @@ const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
   const cards = [
     { key: 'pricing-dashboard', title: 'Pricing', icon: Briefcase, to: '/pricing/dashboard' },
-    { key: 'pre-vendas', title: 'New Business', icon: ClipboardList, to: '/new-business' },
+    { key: 'pre-vendas', title: 'New Projects', icon: ClipboardList, to: '/new-business' },
     { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
     { key: 'catalogo-pro', title: 'Catálogo PRO', icon: Calculator, to: '/catalogo-pro' },
@@ -16,7 +16,7 @@ const SessionSelect = ({ user }) => {
   const subtitleFor = (key) => {
     if (key === 'pricing-dashboard') return 'Histórico e gestão';
     if (key === 'pre-vendas') return 'Prospecção e Pipeline';
-    if (key === 'cs') return 'Controle e reajuste';
+    if (key === 'cs') return 'Controle e Reajuste';
     if (key === 'simulacao') return 'Cálculo e Análise';
     if (key === 'catalogo-pro') return 'Consulta e Gestão';
     return 'Acesso ao Módulo';
