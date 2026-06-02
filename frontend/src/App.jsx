@@ -3,7 +3,6 @@ import "./App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./components/Login";
 import Cadastro from "./components/Cadastro";
-import Dashboard from "./components/Dashboard";
 import SessionSelect from "./components/SessionSelect";
 import Pricing from "./components/Pricing";
 import PricingDashboard from "./components/PricingDashboard";
@@ -12,6 +11,7 @@ import SimulationPage from "./components/SimulationPage";
 import PreVendas from "./components/PreVendas";
 import CS from "./components/CS";
 import CatalogoPro from "./components/CatalogoPro";
+import CombosFeiras from "./components/CombosFeiras";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
 import { Toaster } from "./components/ui/sonner";
@@ -151,6 +151,10 @@ function App() {
           <Route 
             path="/catalogo-pro" 
             element={user ? <CatalogoPro user={user} /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/combos-feiras-2026" 
+            element={user ? <CombosFeiras user={user} /> : <Navigate to="/login" />} 
           />
           {/* Backwards compatibility or redirects */}
           <Route path="/pre-vendas/new-leads" element={<Navigate to="/new-business" replace />} />

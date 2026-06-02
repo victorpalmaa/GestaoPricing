@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Briefcase, ClipboardList, Users, Calculator } from 'lucide-react';
+import { Briefcase, ClipboardList, Users, Calculator, Tags } from 'lucide-react';
 import Header from './Header';
 
 const SessionSelect = ({ user }) => {
@@ -11,14 +11,16 @@ const SessionSelect = ({ user }) => {
     { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
     { key: 'catalogo-pro', title: 'Catálogo PRO', icon: Calculator, to: '/catalogo-pro' },
+    { key: 'combos-feiras', title: 'Combos Feiras 2026', icon: Tags, to: '/combos-feiras-2026' },
   ];
   
   const subtitleFor = (key) => {
-    if (key === 'pricing-dashboard') return 'Histórico e gestão';
+    if (key === 'pricing-dashboard') return 'Histórico e Gestão';
     if (key === 'pre-vendas') return 'Prospecção e Pipeline';
     if (key === 'cs') return 'Controle e Reajuste';
     if (key === 'simulacao') return 'Cálculo e Análise';
     if (key === 'catalogo-pro') return 'Consulta e Gestão';
+    if (key === 'combos-feiras') return 'Ofertas e Condições';
     return 'Acesso ao Módulo';
   };
 
