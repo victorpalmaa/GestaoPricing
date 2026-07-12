@@ -11,7 +11,7 @@ const SessionSelect = ({ user }) => {
     { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
     { key: 'catalogo-pro', title: 'Catálogo PRO', icon: Calculator, to: '/catalogo-pro' },
-    { key: 'combos-feiras', title: 'Combos Feiras 2026', icon: Tags, to: '/combos-feiras-2026' },
+    { key: 'combos-feiras', title: 'Combos 2026', icon: Tags, to: '/combos-feiras-2026' },
   ];
   
   const subtitleFor = (key) => {
@@ -20,7 +20,7 @@ const SessionSelect = ({ user }) => {
     if (key === 'cs') return 'Controle e Reajuste';
     if (key === 'simulacao') return 'Cálculo e Análise';
     if (key === 'catalogo-pro') return 'Consulta e Gestão';
-    if (key === 'combos-feiras') return 'Ofertas e Condições';
+    if (key === 'combos-feiras') return 'Disponível em Breve';
     return 'Acesso ao Módulo';
   };
 

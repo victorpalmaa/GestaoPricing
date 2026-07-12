@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { supabase, cn } from '@/lib/utils';
 import Header from './Header';
 import SearchableSelect from './SearchableSelect';
-import * as XLSX from 'xlsx';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Lock, Calculator, RefreshCcw, TrendingUp, DollarSign, Percent, Upload, History, Info, Map as MapIcon, Check, XCircle, Trash2, X } from 'lucide-react';
+import { Calculator, RefreshCcw, TrendingUp, DollarSign, Percent, History, Info, Map as MapIcon, Check, XCircle, Trash2, X, AlertTriangle, Upload, FileText, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -42,6 +42,92 @@ const MOCK_CATALOG_PRODUCTS = [
   { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 5000, catalog_cost: 30.8, catalog_price: 41.4, catalog_gross_price: 46.0, catalog_margin: 25.6 },
 ];
 
+const MINIMUM_POLICY_STATUS = {
+  NOT_CONFIGURED: 'not_configured',
+  WITHIN_POLICY: 'within_policy',
+  BELOW_MINIMUM_PRICE: 'below_minimum_price',
+  BELOW_MINIMUM_MARGIN: 'below_minimum_margin',
+  BELOW_BOTH: 'below_minimum_price_and_margin',
+};
+
+const normalizeLookupValue = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const parseSpreadsheetNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+
+  let normalized = String(value).replace(/[R$\s]/g, '').trim();
+  if (!normalized) return null;
+
+  if (normalized.includes(',') && normalized.includes('.')) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (normalized.includes(',')) {
+    normalized = normalized.replace(',', '.');
+  }
+
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const evaluateMinimumPolicy = ({ rule, grossPrice, margin }) => {
+  if (!rule) {
+    return {
+      hasRule: false,
+      isBlocked: false,
+      status: MINIMUM_POLICY_STATUS.NOT_CONFIGURED,
+      minimumGrossPrice: null,
+      minimumMargin: null,
+      belowPrice: false,
+      belowMargin: false,
+      message: 'Nenhuma regra minima foi cadastrada para este SKU/volume.',
+    };
+  }
+
+  const minimumGrossPrice = Number(rule.precobruto || 0);
+  const minimumMargin = Number(rule.margem || 0);
+  const simulatedGrossPrice = Number(grossPrice || 0);
+  const simulatedMargin = Number(margin || 0);
+
+  const belowPrice = minimumGrossPrice > 0 && simulatedGrossPrice < (minimumGrossPrice - 0.0001);
+  const belowMargin = minimumMargin > 0 && simulatedMargin < (minimumMargin - 0.0001);
+
+  let status = MINIMUM_POLICY_STATUS.WITHIN_POLICY;
+  if (belowPrice && belowMargin) {
+    status = MINIMUM_POLICY_STATUS.BELOW_BOTH;
+  } else if (belowPrice) {
+    status = MINIMUM_POLICY_STATUS.BELOW_MINIMUM_PRICE;
+  } else if (belowMargin) {
+    status = MINIMUM_POLICY_STATUS.BELOW_MINIMUM_MARGIN;
+  }
+
+  const reasons = [];
+  if (belowPrice) {
+    reasons.push(`o preco bruto minimo permitido e ${minimumGrossPrice.toFixed(2)}`);
+  }
+  if (belowMargin) {
+    reasons.push(`a margem minima permitida e ${minimumMargin.toFixed(2)}%`);
+  }
+
+  return {
+    hasRule: true,
+    isBlocked: belowPrice || belowMargin,
+    status,
+    minimumGrossPrice,
+    minimumMargin,
+    belowPrice,
+    belowMargin,
+    message:
+      reasons.length > 0
+        ? `Esta simulacao nao pode ser salva porque ficou fora da politica minima cadastrada: ${reasons.join(' e ')}.`
+        : 'Simulacao dentro da politica minima cadastrada.',
+  };
+};
+
 const SimulationPage = ({ user }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -68,12 +154,12 @@ const SimulationPage = ({ user }) => {
   const [mode, setMode] = useState('simularMargem'); // 'simularMargem', 'simularPreco' or 'simularPrecoBruto'
   const [calculationError, setCalculationError] = useState('');
   
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importFile, setImportFile] = useState(null);
-
   const [history, setHistory] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
+  const [minimumRules, setMinimumRules] = useState([]);
+  const [importingMinimumRules, setImportingMinimumRules] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
   const [saveForm, setSaveForm] = useState({
     clientName: '',
     target: '',
@@ -87,6 +173,8 @@ const SimulationPage = ({ user }) => {
   const [decisionEffect, setDecisionEffect] = useState({ visible: false, status: '', tokens: [], logoTokens: [] });
   const [deleteConfirmItem, setDeleteConfirmItem] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showHistoryObservations, setShowHistoryObservations] = useState(false);
+  const minimumRulesImportInputRef = useRef(null);
   
   const userArea = user?.area || user?.user_metadata?.area;
   const isPricingUser = userArea === 'Pricing';
@@ -96,7 +184,7 @@ const SimulationPage = ({ user }) => {
     const fetchCatalog = async () => {
       try {
         const { data, error } = await supabase
-          .from('simulation_catalog_prices')
+          .from('catalog_br_prices')
           .select('*')
           .order('sku', { ascending: true })
           .order('volume', { ascending: true });
@@ -111,6 +199,33 @@ const SimulationPage = ({ user }) => {
 
     fetchCatalog();
   }, [history]);
+
+  const loadMinimumRules = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('simulation_minimum_price_rules')
+        .select('*')
+        .order('versao', { ascending: true })
+        .order('volume', { ascending: true });
+
+      if (error) {
+        if (String(error.message || '').toLowerCase().includes('does not exist')) {
+          setMinimumRules([]);
+          return;
+        }
+        throw error;
+      }
+
+      setMinimumRules(data || []);
+    } catch (err) {
+      console.error('Error fetching minimum rules:', err);
+      setMinimumRules([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadMinimumRules();
+  }, [loadMinimumRules]);
 
   // Generate options for the select
   const productOptions = useMemo(() => {
@@ -156,6 +271,25 @@ const SimulationPage = ({ user }) => {
       && String(item.volume || '').trim() === String(selectedVolume).trim()
     ) || null;
   }, [catalogProducts, selectedProductSku, selectedVolume]);
+
+  const selectedMinimumRule = useMemo(() => {
+    const selectedName = normalizeLookupValue(selectedCatalogEntry?.sku || productName || selectedProductSku || '');
+    const selectedVolumeValue = Number(selectedVolume || 0);
+    if (!selectedName || !selectedVolumeValue) return null;
+
+    return (minimumRules || []).find((rule) => {
+      return normalizeLookupValue(rule.versao) === selectedName
+        && Number(rule.volume || 0) === selectedVolumeValue;
+    }) || null;
+  }, [minimumRules, selectedCatalogEntry, productName, selectedProductSku, selectedVolume]);
+
+  const simulationPolicy = useMemo(() => {
+    return evaluateMinimumPolicy({
+      rule: selectedMinimumRule,
+      grossPrice,
+      margin,
+    });
+  }, [selectedMinimumRule, grossPrice, margin]);
 
   useEffect(() => {
     if (!selectedProductSku || (catalogProducts || []).length === 0) return;
@@ -287,6 +421,126 @@ const SimulationPage = ({ user }) => {
     }
   };
 
+  const handleMinimumRulesImportClick = () => {
+    if (!isPricingUser || importingMinimumRules) return;
+    minimumRulesImportInputRef.current?.click();
+  };
+
+  const handleMinimumRulesFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file || !isPricingUser) return;
+
+    try {
+      setImportingMinimumRules(true);
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        toast.error('A planilha de minimos esta vazia.');
+        return;
+      }
+
+      const normalizeHeader = (header) =>
+        normalizeLookupValue(header)
+          .replace(/[^a-z0-9]/g, '');
+      const getValueByAliases = (row, aliases) => {
+        const headers = Object.keys(row || {});
+        const match = headers.find((header) => aliases.includes(normalizeHeader(header)));
+        return match ? row[match] : '';
+      };
+
+      const aliases = {
+        id: ['id'],
+        versao: ['versao', 'nome', 'produto'],
+        margem: ['margem'],
+        precobruto: ['precobruto', 'preco', 'precodevenda', 'precocheio'],
+        volume: ['volume', 'vol']
+      };
+
+      const firstRow = rows[0] || {};
+      const detectedHeaders = Object.keys(firstRow).map((header) => ({
+        original: String(header),
+        normalized: normalizeHeader(header)
+      }));
+      const missingColumns = Object.entries(aliases)
+        .filter(([, candidates]) => {
+          return !Object.keys(firstRow).some((header) => candidates.includes(normalizeHeader(header)));
+        })
+        .map(([key]) => key);
+
+      if (missingColumns.length > 0) {
+        toast.error(`Colunas obrigatorias nao encontradas: ${missingColumns.join(', ')}. Detectadas: ${detectedHeaders.map((item) => item.normalized || item.original).join(', ')}`);
+        return;
+      }
+
+      const payloadByVersionAndVolume = new Map();
+      let invalidRows = 0;
+      let duplicatedRows = 0;
+
+      rows.forEach((row) => {
+        const versao = String(getValueByAliases(row, aliases.versao) || '').trim();
+        const margem = parseSpreadsheetNumber(getValueByAliases(row, aliases.margem));
+        const precobruto = parseSpreadsheetNumber(getValueByAliases(row, aliases.precobruto));
+        const volume = parseSpreadsheetNumber(getValueByAliases(row, aliases.volume));
+
+        if (!versao || !Number.isFinite(volume) || (margem === null && precobruto === null)) {
+          invalidRows += 1;
+          return;
+        }
+
+        const normalizedVersion = normalizeLookupValue(versao);
+        const normalizedVolume = Number(volume);
+        if (!normalizedVersion || !normalizedVolume) {
+          invalidRows += 1;
+          return;
+        }
+
+        const uniqueKey = `${normalizedVersion}::${normalizedVolume}`;
+
+        if (payloadByVersionAndVolume.has(uniqueKey)) {
+          duplicatedRows += 1;
+        }
+
+        payloadByVersionAndVolume.set(uniqueKey, {
+          versao,
+          volume: normalizedVolume,
+          margem,
+          precobruto
+        });
+      });
+
+      const payload = Array.from(payloadByVersionAndVolume.values());
+
+      if (payload.length === 0) {
+        toast.error('Nenhuma linha valida foi encontrada para importar.');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('simulation_minimum_price_rules')
+        .upsert(payload, { onConflict: 'versao,volume' });
+
+      if (error) throw error;
+
+      await loadMinimumRules();
+      toast.success(
+        invalidRows > 0 || duplicatedRows > 0
+          ? `Importacao concluida: ${payload.length} registro(s) importado(s), ${invalidRows} linha(s) invalida(s) e ${duplicatedRows} duplicada(s) consolidadas.`
+          : `Importacao concluida: ${payload.length} registro(s) importado(s).`
+      );
+    } catch (error) {
+      console.error('Erro ao importar minimos:', error);
+      toast.error(`Erro ao importar minimos: ${error.message || 'Erro desconhecido'}`);
+    } finally {
+      setImportingMinimumRules(false);
+    }
+  };
+
   const toRate = (value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return 0;
@@ -404,6 +658,11 @@ const SimulationPage = ({ user }) => {
       toast.error('Selecione o volume do SKU.');
       return;
     }
+    if (simulationPolicy.isBlocked) {
+      setShowRestrictionModal(true);
+      toast.error('Simulação fora da política mínima cadastrada.');
+      return;
+    }
     setShowSaveModal(true);
   };
 
@@ -445,7 +704,14 @@ const SimulationPage = ({ user }) => {
           catalog_cost: Number(selectedCatalogEntry?.catalog_cost || 0),
           catalog_price: Number(selectedCatalogEntry?.catalog_price || 0),
           catalog_gross_price: Number(selectedCatalogEntry?.catalog_gross_price || selectedCatalogEntry?.catalog_price || 0),
-          catalog_margin: Number(selectedCatalogEntry?.catalog_margin || 0)
+          catalog_margin: Number(selectedCatalogEntry?.catalog_margin || 0),
+          approval_status: 'pending',
+          minimum_rule_id: selectedMinimumRule?.id || null,
+          minimum_gross_price: simulationPolicy.minimumGrossPrice,
+          minimum_margin: simulationPolicy.minimumMargin,
+          is_within_minimum_policy: !simulationPolicy.isBlocked,
+          minimum_policy_status: simulationPolicy.status,
+          minimum_policy_message: simulationPolicy.message
         });
 
       if (error) throw error;
@@ -512,6 +778,7 @@ const SimulationPage = ({ user }) => {
     setTimeout(() => {
       setShowHistoryDetailModal(false);
       setSelectedHistoryItem(null);
+      setShowHistoryObservations(false);
       setIsClosingHistoryDetailModal(false);
     }, 280);
   };
@@ -586,162 +853,6 @@ const SimulationPage = ({ user }) => {
     }
   };
 
-  const handleImportTable = () => {
-    setShowImportModal(true);
-  };
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImportFile(file);
-    }
-  };
-
-  const handleImportExcel = async () => {
-    if (!importFile || !user) return;
-
-    try {
-      setLoading(true);
-      const reader = new FileReader();
-      
-      reader.onload = async (e) => {
-        try {
-          const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-          if (jsonData.length === 0) {
-            toast.warning('A planilha está vazia.');
-            return;
-          }
-
-          const processedData = [];
-          let successCount = 0;
-          let errorCount = 0;
-
-          const parseNumber = (val) => {
-            if (val === null || val === undefined || val === '') return 0;
-            if (typeof val === 'number') return val;
-            if (typeof val === 'string') {
-              let clean = val.replace(/[R$\s]/g, '').trim();
-              if (clean === '') return 0;
-              // Handle comma as decimal separator (Brazilian format)
-              if (clean.includes(',') && !clean.includes('.')) {
-                clean = clean.replace(',', '.');
-              } else if (clean.includes(',') && clean.includes('.')) {
-                // Assume 1.000,00 format
-                clean = clean.replace(/\./g, '').replace(',', '.');
-              }
-              const num = Number(clean);
-              return isNaN(num) ? 0 : num;
-            }
-            return 0;
-          };
-
-          const getUserName = () => {
-             return user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0];
-          };
-
-          for (const row of jsonData) {
-            // Map columns based on user requirement:
-            // ID simulação / Versão / Custo / Margem / Preço liquido / Preço bruto
-            
-            const rowKeys = Object.keys(row);
-            
-            // Helper to normalize keys (remove accents, lowercase, trim)
-            const normalizeKey = (key) => {
-              if (!key) return '';
-              return key
-                .toString()
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .trim();
-            };
-
-            const getVal = (targetKeys) => {
-              // Accepts a single key or array of possible keys
-              const targets = Array.isArray(targetKeys) ? targetKeys : [targetKeys];
-              
-              for (const target of targets) {
-                const normalizedTarget = normalizeKey(target);
-                const foundKey = rowKeys.find(k => normalizeKey(k) === normalizedTarget);
-                if (foundKey) return row[foundKey];
-              }
-              return null;
-            };
-
-            const idSimulacao = getVal(['ID simulação', 'ID simulacao', 'id']);
-            const version = getVal(['Versao', 'Versão', 'Version']);
-            const costVal = getVal(['CustoTotal', 'Custo', 'Cost']);
-            const marginVal = getVal(['Margem', 'Margin']);
-            const priceNetVal = getVal(['PrecoLiq', 'Preço liquido', 'Preco liquido', 'Net Price', 'Preço Líquido']);
-            const priceGrossVal = getVal(['PrecoBruto', 'Preço bruto', 'Preco bruto', 'Gross Price', 'Preço Bruto']);
-
-            // Basic validation - at least one financial value must be present
-            if (costVal == null && priceNetVal == null && priceGrossVal == null) {
-              console.log('Skipping row due to missing data:', row);
-              errorCount++;
-              continue;
-            }
-
-            processedData.push({
-              user_id: user.id,
-              user_email: user.email,
-              user_name: getUserName(),
-              sku: idSimulacao || 'N/A',
-              product_name: version || `Sem nome`,
-              cost: parseNumber(costVal),
-              margin: parseNumber(marginVal),
-              price: parseNumber(priceNetVal),
-              gross_price: parseNumber(priceGrossVal),
-              version: version ? String(version) : null,
-              mode: 'import',
-              // If ID is provided and valid UUID, we could use it, but for history we usually generate new IDs.
-              // We'll ignore ID simulação for insertion to avoid conflicts, or store it in a metadata field if needed.
-              // For now, we treat this as adding new history records.
-            });
-            successCount++;
-          }
-
-          if (processedData.length === 0) {
-            toast.warning('Nenhum dado válido encontrado para importação.');
-            return;
-          }
-
-          const { error } = await supabase
-            .from('simulations_history')
-            .insert(processedData);
-
-          if (error) throw error;
-
-          toast.success(`${successCount} registros importados com sucesso!`);
-          if (errorCount > 0) {
-            toast.warning(`${errorCount} linhas ignoradas por falta de dados.`);
-          }
-
-          setShowImportModal(false);
-          setImportFile(null);
-          if (isPricingUser) loadHistory();
-
-        } catch (error) {
-          console.error('Erro ao processar arquivo:', error);
-          toast.error('Erro ao processar arquivo Excel.');
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      reader.readAsArrayBuffer(importFile);
-    } catch (error) {
-      console.error('Erro ao importar:', error);
-      toast.error('Erro ao iniciar importação.');
-      setLoading(false);
-    }
-  };
-
   const formatCurrency = (val) => {
     const num = Number(val);
     if (isNaN(num)) return 'R$ 0,00';
@@ -766,9 +877,34 @@ const SimulationPage = ({ user }) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(numeric || 0);
   };
 
+  const parseCurrencyValue = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') return Number.isNaN(value) ? 0 : value;
+    const normalized = String(value)
+      .replace(/[R$\s]/g, '')
+      .replace(/\./g, '')
+      .replace(',', '.')
+      .trim();
+    const numeric = Number(normalized);
+    return Number.isNaN(numeric) ? 0 : numeric;
+  };
+
   const grossPriceForSaveModal = useMemo(() => {
     return Number(grossPrice) || 0;
   }, [grossPrice]);
+
+  const currentSimulationDiscount = useMemo(() => {
+    const catalogGrossPrice = Number(selectedCatalogEntry?.catalog_gross_price || 0);
+    const simulatedGrossPrice = Number(grossPrice || 0);
+    const discountAmount = catalogGrossPrice - simulatedGrossPrice;
+    const discountPercent = catalogGrossPrice > 0 ? (discountAmount / catalogGrossPrice) * 100 : 0;
+    return {
+      catalogGrossPrice,
+      simulatedGrossPrice,
+      discountAmount,
+      discountPercent,
+    };
+  }, [selectedCatalogEntry, grossPrice]);
 
   const selectedHistoryMetrics = useMemo(() => {
     if (!selectedHistoryItem) return null;
@@ -779,10 +915,14 @@ const SimulationPage = ({ user }) => {
     const simulatedPrice = Number(selectedHistoryItem.price || 0);
     const simulatedGrossPrice = Number(selectedHistoryItem.gross_price || 0);
     const simulatedMargin = Number(selectedHistoryItem.margin || 0);
+    const targetValue = parseCurrencyValue(selectedHistoryItem.target);
+    const hasTarget = targetValue > 0;
     const robCatalog = volume * (catalogGrossPrice || catalogPrice);
     const robEstimated = volume * (simulatedGrossPrice || simulatedPrice);
     const mbCatalog = robCatalog * (catalogMargin / 100);
     const mbEstimated = robEstimated * (simulatedMargin / 100);
+    const priceDiscountAmount = catalogGrossPrice - simulatedGrossPrice;
+    const priceDiscountPercent = catalogGrossPrice > 0 ? (priceDiscountAmount / catalogGrossPrice) * 100 : 0;
     return {
       volume,
       catalogPrice,
@@ -795,10 +935,23 @@ const SimulationPage = ({ user }) => {
       robEstimated,
       mbCatalog,
       mbEstimated,
+      hasTarget,
+      targetValue,
+      targetVsCatalog: hasTarget ? targetValue - catalogGrossPrice : null,
+      targetVsCatalogPercent: hasTarget && catalogGrossPrice > 0 ? ((targetValue - catalogGrossPrice) / catalogGrossPrice) * 100 : null,
+      targetVsSimulated: hasTarget ? targetValue - simulatedGrossPrice : null,
+      targetVsSimulatedPercent: hasTarget && simulatedGrossPrice > 0 ? ((targetValue - simulatedGrossPrice) / simulatedGrossPrice) * 100 : null,
+      priceDiscountAmount,
+      priceDiscountPercent,
       grossPriceVariation: simulatedGrossPrice - catalogGrossPrice,
       marginVariationPp: simulatedMargin - catalogMargin,
       robVariation: robEstimated - robCatalog,
-      mbVariation: mbEstimated - mbCatalog
+      mbVariation: mbEstimated - mbCatalog,
+      minimumGrossPrice: Number(selectedHistoryItem.minimum_gross_price || 0),
+      minimumMargin: Number(selectedHistoryItem.minimum_margin || 0),
+      minimumPolicyStatus: String(selectedHistoryItem.minimum_policy_status || '').trim(),
+      minimumPolicyMessage: String(selectedHistoryItem.minimum_policy_message || '').trim(),
+      isWithinMinimumPolicy: selectedHistoryItem.is_within_minimum_policy !== false
     };
   }, [selectedHistoryItem]);
 
@@ -813,72 +966,14 @@ const SimulationPage = ({ user }) => {
       />
       
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        <input
+          ref={minimumRulesImportInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          className="hidden"
+          onChange={handleMinimumRulesFileChange}
+        />
         
-        {/* Import Modal */}
-        {showImportModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-[#171717] dark:border dark:border-gray-800 rounded-lg p-6 w-full max-w-md shadow-2xl transition-all duration-200">
-              <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white flex items-center gap-2">
-                <Upload className="w-5 h-5" />
-                Importar Simulações
-              </h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    Arquivo Excel (.xlsx, .xls)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={handleFileUpload}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-900/30 dark:file:text-blue-400"
-                    />
-                  </div>
-                  {importFile && (
-                    <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
-                      <Check className="w-3 h-3" />
-                      Arquivo selecionado: {importFile.name}
-                    </p>
-                  )}
-                </div>
-
-                <div className="bg-gray-50 dark:bg-gray-900/50 p-3 rounded-lg border border-gray-100 dark:border-gray-800">
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Formato esperado das colunas:</p>
-                  <ul className="text-xs text-gray-600 dark:text-gray-400 space-y-1 list-disc list-inside">
-                    <li>ID simulação</li>
-                    <li>Versao</li>
-                    <li>CustoTotal</li>
-                    <li>Margem</li>
-                    <li>PrecoLiq</li>
-                    <li>PrecoBruto</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => {
-                    setShowImportModal(false);
-                    setImportFile(null);
-                  }}
-                  className="px-4 py-2 rounded-lg font-medium text-sm transition-colors text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleImportExcel}
-                  disabled={!importFile || loading}
-                  className="px-4 py-2 rounded-lg font-medium text-sm transition-colors text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {loading ? 'Importando...' : 'Importar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Main Simulator Card */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <Card className="shadow-lg border-t-4 border-t-[#845AFA]">
@@ -893,10 +988,22 @@ const SimulationPage = ({ user }) => {
                     Selecione um SKU do catálogo para simular
                   </CardDescription>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleImportTable} className="gap-2">
-                  <Upload size={16} />
-                  Importar Tabela
-                </Button>
+                {isPricingUser && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={handleMinimumRulesImportClick}
+                    disabled={importingMinimumRules}
+                  >
+                    {importingMinimumRules ? (
+                      <RefreshCcw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Upload className="w-4 h-4" />
+                    )}
+                    {importingMinimumRules ? 'Importando...' : 'Importar minimos'}
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -953,31 +1060,28 @@ const SimulationPage = ({ user }) => {
                 {/* Cost Input - Restricted View (Hidden in simularPrecoBruto mode) */}
                 {mode !== 'simularPrecoBruto' && (
                   <div className="space-y-2 relative">
-                    <Label htmlFor="cost" className="flex items-center gap-2">
-                      Custo do Produto
-                      {!isPricingUser && <Lock className="w-3 h-3 text-muted-foreground" />}
-                    </Label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-2.5 text-muted-foreground">R$</span>
-                      <Input 
-                        id="cost" 
-                        type="number" 
-                        value={cost} 
-                        onChange={(e) => setCost(e.target.value)}
-                        onBlur={(e) => handleBlur(setCost, e.target.value)}
-                        disabled={!isPricingUser || mode === 'simularMargem' || mode === 'simularPreco'}
-                        className={cn(
-                          "pl-8",
-                          !isPricingUser && "bg-muted text-transparent select-none",
-                          (mode === 'simularMargem' || mode === 'simularPreco') && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
-                        )}
-                      />
-                      {!isPricingUser && (
-                        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground font-medium bg-muted/50 rounded-md backdrop-blur-[2px]">
-                          Confidencial
-                        </div>
-                      )}
-                    </div>
+                    <Label htmlFor="cost">Custo do Produto</Label>
+                    {isPricingUser ? (
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-muted-foreground">R$</span>
+                        <Input 
+                          id="cost" 
+                          type="number" 
+                          value={cost} 
+                          onChange={(e) => setCost(e.target.value)}
+                          onBlur={(e) => handleBlur(setCost, e.target.value)}
+                          disabled={mode === 'simularMargem' || mode === 'simularPreco'}
+                          className={cn(
+                            "pl-8",
+                            (mode === 'simularMargem' || mode === 'simularPreco') && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                          )}
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-md border bg-white px-3 py-2 text-sm font-medium text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+                        {formatCurrency(Number(cost))}
+                      </div>
+                    )}
                     {(mode === 'simularMargem' || mode === 'simularPreco') && (
                        <p className="text-[10px] text-muted-foreground">O custo é fixo baseado no produto selecionado.</p>
                     )}
@@ -1189,11 +1293,9 @@ const SimulationPage = ({ user }) => {
                 </span>
                 <div className="text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
                   {mode === 'simularMargem' ? (
-                    isPricingUser ? (
-                      <span className={marginForDisplay < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
-                        {formatPercent(marginForDisplay)}
-                      </span>
-                    ) : '***'
+                    <span className={marginForDisplay < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
+                      {formatPercent(marginForDisplay)}
+                    </span>
                   ) : mode === 'simularPreco' ? (
                     <span className="text-[#845AFA]">
                       {formatCurrency(Number(grossPrice))}
@@ -1210,8 +1312,23 @@ const SimulationPage = ({ user }) => {
                   </div>
                 )}
                 <div className="mt-4 px-3 py-1.5 rounded-full bg-[#845AFA]/10 border border-[#845AFA]/20 text-xs font-medium text-[#6b46c1] dark:text-purple-300">
-                  Margem catálogo: {formatPercent(catalogMarginValue || Number(margin || 0))}
+                  Margem catalogo: {formatPercent(catalogMarginValue || Number(margin || 0))}
                 </div>
+                {simulationPolicy.hasRule && (
+                  <div className={cn(
+                    "mt-3 w-full rounded-xl border px-4 py-3 text-left text-sm",
+                    simulationPolicy.isBlocked
+                      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300"
+                  )}>
+                    <div className="font-semibold">
+                      {simulationPolicy.isBlocked ? 'Fora da politica minima' : 'Dentro da politica minima'}
+                    </div>
+                    <div className="mt-1 text-xs">
+                      Preco bruto minimo: {formatCurrency(simulationPolicy.minimumGrossPrice || 0)} | Margem minima: {formatPercent(simulationPolicy.minimumMargin || 0)}
+                    </div>
+                  </div>
+                )}
                 
                 {/* Tax Breakdown (only for simularPrecoBruto mode) */}
                 {mode === 'simularPrecoBruto' && Number(grossPrice) > 0 && (
@@ -1222,11 +1339,6 @@ const SimulationPage = ({ user }) => {
                    </div>
                 )}
                 
-                {!isPricingUser && mode === 'simularMargem' && (
-                  <Badge variant="outline" className="mt-4 border-yellow-200 bg-yellow-50 text-yellow-700">
-                    Restrito ao Pricing
-                  </Badge>
-                )}
               </div>
 
               {/* Secondary Metrics Grid */}
@@ -1239,7 +1351,7 @@ const SimulationPage = ({ user }) => {
                     <span className="text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Custo Base</span>
                   </div>
                   <div className="text-xl font-bold text-gray-900 dark:text-white">
-                    {isPricingUser ? formatCurrency(Number(cost)) : 'Confidencial'}
+                    {formatCurrency(Number(cost))}
                   </div>
                 </div>
 
@@ -1251,7 +1363,7 @@ const SimulationPage = ({ user }) => {
                     <span className="text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">Lucro Bruto</span>
                   </div>
                   <div className="text-xl font-bold text-green-600 dark:text-green-400">
-                    {isPricingUser ? formatCurrency(Number(price) - Number(cost)) : 'Confidencial'}
+                    {formatCurrency(Number(price) - Number(cost))}
                   </div>
                 </div>
               </div>
@@ -1301,6 +1413,7 @@ const SimulationPage = ({ user }) => {
                             className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer"
                             onClick={() => {
                               setSelectedHistoryItem(item);
+                              setShowHistoryObservations(false);
                               setIsClosingHistoryDetailModal(false);
                               setShowHistoryDetailModal(true);
                             }}
@@ -1415,6 +1528,18 @@ const SimulationPage = ({ user }) => {
                   <Label>Preço Bruto (novo)</Label>
                   <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">{formatCurrency(grossPriceForSaveModal)}</div>
                 </div>
+                <div>
+                  <Label>Desconto vs. catálogo</Label>
+                  <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">
+                    {formatPercent(currentSimulationDiscount.discountPercent)}
+                  </div>
+                </div>
+                <div>
+                  <Label>Valor do desconto</Label>
+                  <div className="mt-1 px-3 py-2 rounded border border-gray-200 dark:border-gray-700">
+                    {formatCurrency(currentSimulationDiscount.discountAmount)}
+                  </div>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Cliente *</Label>
@@ -1451,6 +1576,45 @@ const SimulationPage = ({ user }) => {
           </div>
         )}
 
+        <AlertDialog open={showRestrictionModal} onOpenChange={setShowRestrictionModal}>
+          <AlertDialogContent className="max-w-lg">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-700 dark:text-red-300">
+                <AlertTriangle className="w-5 h-5" />
+                Simulação fora do range permitido
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-sm leading-6">
+                {simulationPolicy.message}
+              </AlertDialogDescription>
+              <div className="rounded-xl border border-red-100 bg-red-50/80 p-4 text-sm dark:border-red-900/40 dark:bg-red-900/10">
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Preço bruto simulado</span>
+                  <span className="font-semibold">{formatCurrency(Number(grossPrice) || 0)}</span>
+                </div>
+                <div className="mt-2 flex justify-between gap-4">
+                  <span className="text-muted-foreground">Margem simulada</span>
+                  <span className="font-semibold">{formatPercent(Number(margin) || 0)}</span>
+                </div>
+                <div className="mt-4 border-t border-red-200 pt-3 dark:border-red-900/40">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Preço bruto mínimo</span>
+                    <span className="font-semibold">{formatCurrency(simulationPolicy.minimumGrossPrice || 0)}</span>
+                  </div>
+                  <div className="mt-2 flex justify-between gap-4">
+                    <span className="text-muted-foreground">Margem mínima</span>
+                    <span className="font-semibold">{formatPercent(simulationPolicy.minimumMargin || 0)}</span>
+                  </div>
+                </div>
+              </div>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button variant="outline" onClick={() => setShowRestrictionModal(false)}>
+                Entendi
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {(showHistoryDetailModal || isClosingHistoryDetailModal) && selectedHistoryItem && selectedHistoryMetrics && (
           <div className={cn("fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-300", isClosingHistoryDetailModal ? "bg-black/0 opacity-0" : "bg-black/50 opacity-100")}>
             <div className={cn("bg-white dark:bg-[#111111] rounded-2xl w-full max-w-4xl p-0 border border-[#845AFA]/20 dark:border-[#845AFA]/30 overflow-hidden shadow-2xl transition-all duration-300", isClosingHistoryDetailModal ? "opacity-0 scale-95 translate-y-3" : "opacity-100 scale-100 translate-y-0")}>
@@ -1464,6 +1628,15 @@ const SimulationPage = ({ user }) => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-white text-[#6b46c1] border-white hover:bg-purple-50"
+                    onClick={() => setShowHistoryObservations(prev => !prev)}
+                  >
+                    <FileText className="w-4 h-4 mr-1.5" />
+                    Observações
+                  </Button>
                   <Badge className={cn("text-[11px] border bg-white/10 text-white border-white/30", getApprovalStatus(selectedHistoryItem) === 'approved' && "bg-green-500/20 border-green-200/30", getApprovalStatus(selectedHistoryItem) === 'rejected' && "bg-red-500/20 border-red-200/30")}>
                     {approvalStatusUi[getApprovalStatus(selectedHistoryItem)].label}
                   </Badge>
@@ -1473,6 +1646,56 @@ const SimulationPage = ({ user }) => {
                 </div>
               </div>
               <div className="p-6 space-y-5">
+                <div className="rounded-xl border border-[#845AFA]/20 bg-[#845AFA]/5 px-4 py-3 dark:border-[#845AFA]/30 dark:bg-[#845AFA]/10">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Cliente da Simulação</div>
+                      <div className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
+                        {selectedHistoryItem.client_name || 'Nao informado'}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                      <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">
+                          <Target className="w-3.5 h-3.5" />
+                          Target
+                        </div>
+                        <div className="mt-1 font-semibold text-gray-900 dark:text-white">
+                          {selectedHistoryMetrics.targetValue > 0 ? formatCurrency(selectedHistoryMetrics.targetValue) : 'Nao informado'}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                        <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Catálogo</div>
+                        <div className={cn("mt-1 font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsCatalog < 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
+                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsCatalog) : 'Nao informado'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsCatalogPercent) : '-'}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                        <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Simulado</div>
+                        <div className={cn("mt-1 font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsSimulated < 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
+                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsSimulated) : 'Nao informado'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsSimulatedPercent) : '-'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {showHistoryObservations && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      <FileText className="w-4 h-4" />
+                      Observações
+                    </div>
+                    <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white/90 p-3 text-sm leading-6 text-slate-700 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-200 whitespace-pre-wrap break-words">
+                      {String(selectedHistoryItem.observations || '').trim() || 'Nenhuma observação informada nesta simulação.'}
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   <div className="p-4 rounded-xl border border-purple-100 dark:border-purple-900/30 bg-purple-50/50 dark:bg-purple-900/10">
                     <div className="font-semibold mb-3 text-[#6b46c1] dark:text-purple-300">Catálogo</div>
@@ -1495,7 +1718,31 @@ const SimulationPage = ({ user }) => {
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {selectedHistoryMetrics.minimumGrossPrice > 0 || selectedHistoryMetrics.minimumMargin > 0 ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm dark:border-amber-900/40 dark:bg-amber-900/10">
+                    <div className="font-semibold text-amber-800 dark:text-amber-300">Regra minima aplicada</div>
+                    <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-xs text-amber-900/80 dark:text-amber-200/90">
+                      <span>Preco bruto minimo: {formatCurrency(selectedHistoryMetrics.minimumGrossPrice)}</span>
+                      <span>Margem minima: {formatPercent(selectedHistoryMetrics.minimumMargin)}</span>
+                      <span>Status: {selectedHistoryMetrics.isWithinMinimumPolicy ? 'Dentro da politica' : 'Fora da politica'}</span>
+                    </div>
+                    {selectedHistoryMetrics.minimumPolicyMessage && (
+                      <div className="mt-2 text-xs text-amber-900/80 dark:text-amber-200/90">
+                        {selectedHistoryMetrics.minimumPolicyMessage}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Desconto Preço</div>
+                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.priceDiscountPercent > 0 ? "text-red-500" : selectedHistoryMetrics.priceDiscountPercent < 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-900 dark:text-gray-100")}>
+                      {formatPercent(selectedHistoryMetrics.priceDiscountPercent)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {formatCurrency(selectedHistoryMetrics.priceDiscountAmount)}
+                    </div>
+                  </div>
                   <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
                     <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Preço Bruto</div>
                     <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.grossPriceVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
