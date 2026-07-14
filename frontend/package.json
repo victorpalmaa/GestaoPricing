@@ -58,7 +58,8 @@
     "zod": "^3.24.4"
   },
   "scripts": {
-    "start": "craco start",
+    "start": "vite --host 0.0.0.0 --port 3000",
+    "start:cra": "craco start",
     "build": "craco build",
     "test": "craco test",
     "dev": "vite"

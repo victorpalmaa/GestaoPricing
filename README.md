@@ -51,6 +51,7 @@ Opcional no frontend: `REACT_APP_API_URL` (ex.: `http://localhost:8000/api`).
 2) Frontend
    - Em `frontend/`: `yarn start` ou `npm start`
    - Abre em `http://localhost:3000`
+   - Se precisar do fluxo antigo com CRA/CRACO: `npm run start:cra`
 
 ## Fluxo de Uso
 - Login → Seleção de Sessão (`/select`) → Página da sessão (`/pricing`, `/pre-vendas/new-leads`, `/cs`).
@@ -58,7 +59,7 @@ Opcional no frontend: `REACT_APP_API_URL` (ex.: `http://localhost:8000/api`).
 - Alertas de sucesso aparecem no canto inferior em operações de edição/exclusão.
 
 ## Scripts Úteis
-- Frontend: `yarn start`, `yarn build`, `yarn test`.
+- Frontend: `yarn start`, `yarn build`, `yarn test`, `yarn start:cra`.
 - Backend: `uvicorn server:app --reload` para desenvolvimento.
 
 ## Notas

@@ -2,6 +2,17 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { supabase, cn } from '@/lib/utils';
+import {
+  calculateGrossPriceFromNetPrice,
+  calculateMarginFromGrossPrice,
+  estimateMarginFromGrossPrice,
+  formatMarginPercentInputValue,
+  calculateNetPriceFromGrossPrice,
+  normalizeMarginPercentInput,
+  roundCurrency,
+  solveDisplayedPriceByMargin,
+  toRate,
+} from '@/utils/simulationPricing';
 import Header from './Header';
 import SearchableSelect from './SearchableSelect';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -50,6 +61,13 @@ const MINIMUM_POLICY_STATUS = {
   BELOW_BOTH: 'below_minimum_price_and_margin',
 };
 
+const SIMULATION_MODES = {
+  MARGIN: 'simularMargem',
+  PRICE: 'simularPreco',
+  GROSS_CALCULATION: 'calculoPrecoBruto',
+  NET_CALCULATION: 'calculoPrecoLiquido',
+};
+
 const normalizeLookupValue = (value) =>
   String(value || '')
     .normalize('NFD')
@@ -90,11 +108,13 @@ const evaluateMinimumPolicy = ({ rule, grossPrice, margin }) => {
 
   const minimumGrossPrice = Number(rule.precobruto || 0);
   const minimumMargin = Number(rule.margem || 0);
-  const simulatedGrossPrice = Number(grossPrice || 0);
-  const simulatedMargin = Number(margin || 0);
+  const simulatedGrossPrice = roundCurrency(grossPrice || 0);
+  const simulatedMargin = roundCurrency(normalizeMarginPercentInput(margin || 0));
+  const roundedMinimumGrossPrice = roundCurrency(minimumGrossPrice);
+  const roundedMinimumMargin = roundCurrency(minimumMargin);
 
-  const belowPrice = minimumGrossPrice > 0 && simulatedGrossPrice < (minimumGrossPrice - 0.0001);
-  const belowMargin = minimumMargin > 0 && simulatedMargin < (minimumMargin - 0.0001);
+  const belowPrice = roundedMinimumGrossPrice > 0 && simulatedGrossPrice < (roundedMinimumGrossPrice - 0.01 - 0.0001);
+  const belowMargin = roundedMinimumMargin > 0 && simulatedMargin < (roundedMinimumMargin - 0.0001);
 
   let status = MINIMUM_POLICY_STATUS.WITHIN_POLICY;
   if (belowPrice && belowMargin) {
@@ -107,18 +127,18 @@ const evaluateMinimumPolicy = ({ rule, grossPrice, margin }) => {
 
   const reasons = [];
   if (belowPrice) {
-    reasons.push(`o preco bruto minimo permitido e ${minimumGrossPrice.toFixed(2)}`);
+    reasons.push(`o preco bruto minimo permitido e ${roundedMinimumGrossPrice.toFixed(2)}`);
   }
   if (belowMargin) {
-    reasons.push(`a margem minima permitida e ${minimumMargin.toFixed(2)}%`);
+    reasons.push(`a margem minima permitida e ${roundedMinimumMargin.toFixed(2)}%`);
   }
 
   return {
     hasRule: true,
     isBlocked: belowPrice || belowMargin,
     status,
-    minimumGrossPrice,
-    minimumMargin,
+    minimumGrossPrice: roundedMinimumGrossPrice,
+    minimumMargin: roundedMinimumMargin,
     belowPrice,
     belowMargin,
     message:
@@ -142,7 +162,7 @@ const SimulationPage = ({ user }) => {
   const [productName, setProductName] = useState(initialState.productName || '');
   const [cost, setCost] = useState(initialState.initialCost || '');
   const [price, setPrice] = useState(initialState.initialPrice || '');
-  const [margin, setMargin] = useState(initialState.initialMargin || '');
+  const [margin, setMargin] = useState(() => formatMarginPercentInputValue(initialState.initialMargin));
   const [pis, setPis] = useState(1.65);
   const [cofins, setCofins] = useState(7.60);
   const [icms, setIcms] = useState(12.00);
@@ -151,7 +171,7 @@ const SimulationPage = ({ user }) => {
   const [encargo, setEncargo] = useState(1.5);
   const [ipi, setIpi] = useState(0);
   const [grossPrice, setGrossPrice] = useState('');
-  const [mode, setMode] = useState('simularMargem'); // 'simularMargem', 'simularPreco' or 'simularPrecoBruto'
+  const [mode, setMode] = useState(SIMULATION_MODES.MARGIN);
   const [calculationError, setCalculationError] = useState('');
   
   const [history, setHistory] = useState([]);
@@ -335,7 +355,7 @@ const SimulationPage = ({ user }) => {
     setProductName(selectedCatalogEntry.sku || '');
     setCost(formatValue(selectedCatalogEntry.catalog_cost));
     setPrice(formatValue(selectedCatalogEntry.catalog_price));
-    setMargin(formatValue(selectedCatalogEntry.catalog_margin));
+    setMargin(formatMarginPercentInputValue(selectedCatalogEntry.catalog_margin));
     setGrossPrice(formatValue(selectedCatalogEntry.catalog_gross_price || selectedCatalogEntry.catalog_price));
     setHasManualInput(false);
   }, [selectedCatalogEntry]);
@@ -344,7 +364,7 @@ const SimulationPage = ({ user }) => {
   useEffect(() => {
     const costNum = Number(cost) || 0;
     const priceNum = Number(price) || 0;
-    const marginNum = Number(margin) || 0;
+    const marginNum = normalizeMarginPercentInput(margin);
 
     calculate(costNum, priceNum, marginNum);
   }, [price, margin, cost, mode, pis, cofins, icms, grossPrice, comissao, frete, encargo, ipi]);
@@ -414,9 +434,13 @@ const SimulationPage = ({ user }) => {
     }
   };
 
-  const handleBlur = (setter, value) => {
-    const num = parseFloat(value);
+  const handleBlur = (setter, value, options = {}) => {
+    const normalizedValue = String(value ?? '').replace(',', '.');
+    let num = parseFloat(normalizedValue);
     if (!isNaN(num)) {
+      if (options.normalizePercent) {
+        num = normalizeMarginPercentInput(num);
+      }
       setter(num.toFixed(2));
     }
   };
@@ -541,56 +565,6 @@ const SimulationPage = ({ user }) => {
     }
   };
 
-  const toRate = (value) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return 0;
-    return numeric / 100;
-  };
-
-  const calculatePricingFactors = ({ pisRate, cofinsRate, icmsRate }) => {
-    const pisLiq = pisRate * (1 - icmsRate);
-    const cofinsLiq = cofinsRate * (1 - icmsRate);
-    const fatorImp = 1 - pisLiq - cofinsLiq - icmsRate;
-    return { pisLiq, cofinsLiq, fatorImp };
-  };
-
-  const solvePriceByMargin = ({
-    custoTotal,
-    margemRate,
-    pisRate,
-    cofinsRate,
-    icmsRate,
-    comissaoRate,
-    freteRate,
-    encargoRate,
-    ipiRate
-  }) => {
-    const { pisLiq, cofinsLiq, fatorImp } = calculatePricingFactors({ pisRate, cofinsRate, icmsRate });
-    const denominador = 1 - comissaoRate - freteRate - (margemRate * fatorImp) - pisLiq - cofinsLiq - icmsRate;
-    if (denominador <= 0) {
-      return { error: 'Margem inviável para as alíquotas configuradas.' };
-    }
-    const pbBase = custoTotal / denominador;
-    const rolBase = pbBase * fatorImp;
-    const denomEnc = 1 - pisLiq - cofinsLiq - icmsRate - comissaoRate - freteRate;
-    if (denomEnc <= 0) {
-      return { error: 'Parâmetros inviáveis para cálculo com encargo.' };
-    }
-    const pbSemIpi = ((margemRate * rolBase) + custoTotal + (encargoRate * pbBase)) / denomEnc;
-    const pbComIpi = pbSemIpi * (1 + ipiRate);
-    const rol = pbSemIpi * fatorImp;
-    if (rol <= 0) {
-      return { error: 'Parâmetros inviáveis para cálculo.' };
-    }
-    const margemReal = (rol - custoTotal) / rol;
-    return {
-      pbSemIpi,
-      pbComIpi,
-      rol,
-      margemReal
-    };
-  };
-
   const calculate = (costNum, priceNum, marginNum) => {
     const pisRate = toRate(pis);
     const cofinsRate = toRate(cofins);
@@ -599,50 +573,104 @@ const SimulationPage = ({ user }) => {
     const freteRate = toRate(frete);
     const encargoRate = toRate(encargo);
     const ipiRate = toRate(ipi);
-    const { fatorImp } = calculatePricingFactors({ pisRate, cofinsRate, icmsRate });
-    const catalogGross = Number(selectedCatalogEntry?.catalog_gross_price || 0);
-    const catalogNet = Number(selectedCatalogEntry?.catalog_price || 0);
-    const netFactorFromCatalog = catalogGross > 0 && catalogNet > 0 ? (catalogNet / catalogGross) : (1 - icmsRate);
 
-    if (mode === 'simularMargem') {
-      const grossNum = Number(grossPrice);
-      if (grossNum <= 0 || netFactorFromCatalog <= 0) {
+    if (mode === SIMULATION_MODES.MARGIN) {
+      const grossNum = Number(grossPrice || 0);
+      const result = estimateMarginFromGrossPrice({
+        grossPrice: grossNum,
+        custoTotal: costNum,
+        pisRate,
+        cofinsRate,
+        icmsRate,
+        comissaoRate,
+        freteRate,
+        encargoRate,
+        ipiRate,
+      });
+      if (grossNum <= 0) {
         setCalculationError('');
         return;
       }
-      const netPrice = grossNum * netFactorFromCatalog;
-      if (Math.abs(netPrice - priceNum) > 0.01) {
-        setPrice(netPrice.toFixed(2));
-      }
-      const calculatedMargin = ((netPrice - costNum) / netPrice) * 100;
-      if (Number.isFinite(calculatedMargin) && Math.abs(calculatedMargin - marginNum) > 0.01) {
-        setMargin(calculatedMargin.toFixed(2));
-      }
-      setCalculationError('');
-    } else if (mode === 'simularPreco') {
-      const margemRate = marginNum / 100;
-      const margemDenominador = 1 - margemRate;
-      if (margemDenominador <= 0 || netFactorFromCatalog <= 0) {
-        setCalculationError('Margem inviável para os parâmetros atuais.');
+      if (result.error) {
+        setCalculationError('');
         return;
       }
-      const netPrice = costNum / margemDenominador;
-      const grossFromNet = netPrice / netFactorFromCatalog;
-      if (Math.abs(netPrice - priceNum) > 0.01) {
-        setPrice(netPrice.toFixed(2));
+      if (Math.abs(result.roundedNetPrice - priceNum) > 0.01) {
+        setPrice(result.roundedNetPrice.toFixed(2));
       }
-      if (Math.abs(grossFromNet - Number(grossPrice)) > 0.01) {
-        setGrossPrice(grossFromNet.toFixed(2));
+      if (Number.isFinite(result.marginPercent) && Math.abs(result.marginPercent - marginNum) > 0.01) {
+        setMargin(result.marginPercent.toFixed(2));
       }
       setCalculationError('');
-    } else if (mode === 'simularPrecoBruto') {
-      if (fatorImp <= 0) {
-        setCalculationError('Não foi possível calcular com as alíquotas atuais.');
+    } else if (mode === SIMULATION_MODES.PRICE) {
+      const marginRate = marginNum / 100;
+      const result = solveDisplayedPriceByMargin({
+        custoTotal: costNum,
+        margemRate: marginRate,
+        pisRate,
+        cofinsRate,
+        icmsRate,
+        comissaoRate,
+        freteRate,
+        encargoRate,
+        ipiRate,
+      });
+      if (result.error) {
+        setCalculationError(result.error);
         return;
       }
-      const gross = priceNum / fatorImp;
-      if (Math.abs(gross - Number(grossPrice)) > 0.01) {
-        setGrossPrice(gross.toFixed(2));
+      if (Math.abs(result.roundedNetPrice - priceNum) > 0.01) {
+        setPrice(result.roundedNetPrice.toFixed(2));
+      }
+      if (Math.abs(result.grossPrice - Number(grossPrice)) > 0.01) {
+        setGrossPrice(result.grossPrice.toFixed(2));
+      }
+      setCalculationError('');
+    } else if (mode === SIMULATION_MODES.GROSS_CALCULATION) {
+      const grossResult = calculateGrossPriceFromNetPrice({
+        netPrice: priceNum,
+        pisRate,
+        cofinsRate,
+        icmsRate,
+        ipiRate,
+      });
+      if (grossResult.error) {
+        setCalculationError(grossResult.error);
+        return;
+      }
+      const marginResult = calculateMarginFromGrossPrice({
+        grossPrice: grossResult.grossPrice,
+        cost: costNum,
+        pisRate,
+        cofinsRate,
+        icmsRate,
+        ipiRate,
+      });
+      if (Math.abs(grossResult.grossPrice - Number(grossPrice)) > 0.01) {
+        setGrossPrice(grossResult.grossPrice.toFixed(2));
+      }
+      if (Number.isFinite(marginResult.marginPercent) && Math.abs(marginResult.marginPercent - marginNum) > 0.01) {
+        setMargin(marginResult.marginPercent.toFixed(2));
+      }
+      setCalculationError('');
+    } else if (mode === SIMULATION_MODES.NET_CALCULATION) {
+      const result = calculateNetPriceFromGrossPrice({
+        grossPrice,
+        pisRate,
+        cofinsRate,
+        icmsRate,
+        ipiRate,
+      });
+      if (result.error) {
+        setCalculationError(result.error);
+        return;
+      }
+      const marginPercent = result.netPrice > 0 ? ((result.netPrice - costNum) / result.netPrice) * 100 : 0;
+      if (Math.abs(result.netPrice - priceNum) > 0.01) {
+        setPrice(result.netPrice.toFixed(2));
+      }
+      if (Number.isFinite(marginPercent) && Math.abs(marginPercent - marginNum) > 0.01) {
+        setMargin(marginPercent.toFixed(2));
       }
       setCalculationError('');
     }
@@ -658,12 +686,41 @@ const SimulationPage = ({ user }) => {
       toast.error('Selecione o volume do SKU.');
       return;
     }
-    if (simulationPolicy.isBlocked) {
+    if (showsMinimumPolicyWarnings && simulationPolicy.isBlocked) {
       setShowRestrictionModal(true);
       toast.error('Simulação fora da política mínima cadastrada.');
       return;
     }
     setShowSaveModal(true);
+  };
+
+  const insertSimulationHistory = async (payload) => {
+    const sanitizedPayload = { ...payload };
+
+    while (true) {
+      const { error } = await supabase
+        .from('simulations_history')
+        .insert(sanitizedPayload);
+
+      if (!error) {
+        return null;
+      }
+
+      const missingColumnMatch = String(error.message || '').match(
+        /Could not find the '([^']+)' column of 'simulations_history'/
+      );
+
+      if (!missingColumnMatch) {
+        return error;
+      }
+
+      const missingColumn = missingColumnMatch[1];
+      if (!(missingColumn in sanitizedPayload)) {
+        return error;
+      }
+
+      delete sanitizedPayload[missingColumn];
+    }
   };
 
   const handleSaveSimulation = async () => {
@@ -680,39 +737,37 @@ const SimulationPage = ({ user }) => {
       const parsedMargin = Number(margin) || 0;
       const parsedGrossPrice = Number(grossPrice) || 0;
 
-      const { error } = await supabase
-        .from('simulations_history')
-        .insert({
-          user_id: user.id,
-          sku: sku || 'N/A',
-          datasul_code: selectedCatalogEntry?.datasul_code || null,
-          volume: selectedVolume ? Number(selectedVolume) : null,
-          product_name: productName || 'Simulação Avulsa',
-          price: parsedPrice,
-          cost: parsedCost,
-          margin: parsedMargin,
-          mode: mode,
-          pis: Number(pis),
-          cofins: Number(cofins),
-          icms: Number(icms),
-          gross_price: parsedGrossPrice,
-          user_email: user.email,
-          user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
-          client_name: saveForm.clientName.trim(),
-          target: saveForm.target?.trim() || null,
-          observations: saveForm.observations?.trim() || null,
-          catalog_cost: Number(selectedCatalogEntry?.catalog_cost || 0),
-          catalog_price: Number(selectedCatalogEntry?.catalog_price || 0),
-          catalog_gross_price: Number(selectedCatalogEntry?.catalog_gross_price || selectedCatalogEntry?.catalog_price || 0),
-          catalog_margin: Number(selectedCatalogEntry?.catalog_margin || 0),
-          approval_status: 'pending',
-          minimum_rule_id: selectedMinimumRule?.id || null,
-          minimum_gross_price: simulationPolicy.minimumGrossPrice,
-          minimum_margin: simulationPolicy.minimumMargin,
-          is_within_minimum_policy: !simulationPolicy.isBlocked,
-          minimum_policy_status: simulationPolicy.status,
-          minimum_policy_message: simulationPolicy.message
-        });
+      const error = await insertSimulationHistory({
+        user_id: user.id,
+        sku: sku || 'N/A',
+        datasul_code: selectedCatalogEntry?.datasul_code || null,
+        volume: selectedVolume ? Number(selectedVolume) : null,
+        product_name: productName || 'Simulação Avulsa',
+        price: parsedPrice,
+        cost: parsedCost,
+        margin: parsedMargin,
+        mode: mode,
+        pis: Number(pis),
+        cofins: Number(cofins),
+        icms: Number(icms),
+        gross_price: parsedGrossPrice,
+        user_email: user.email,
+        user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
+        client_name: saveForm.clientName.trim(),
+        target: saveForm.target?.trim() || null,
+        observations: saveForm.observations?.trim() || null,
+        catalog_cost: Number(selectedCatalogEntry?.catalog_cost || 0),
+        catalog_price: Number(selectedCatalogEntry?.catalog_price || 0),
+        catalog_gross_price: Number(selectedCatalogEntry?.catalog_gross_price || selectedCatalogEntry?.catalog_price || 0),
+        catalog_margin: Number(selectedCatalogEntry?.catalog_margin || 0),
+        approval_status: 'pending',
+        minimum_rule_id: selectedMinimumRule?.id || null,
+        minimum_gross_price: simulationPolicy.minimumGrossPrice,
+        minimum_margin: simulationPolicy.minimumMargin,
+        is_within_minimum_policy: !simulationPolicy.isBlocked,
+        minimum_policy_status: simulationPolicy.status,
+        minimum_policy_message: simulationPolicy.message
+      });
 
       if (error) throw error;
       
@@ -859,6 +914,15 @@ const SimulationPage = ({ user }) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
   };
 
+  const formatCurrencyRounded = (val) => {
+    const num = Number(val);
+    if (isNaN(num)) return 'R$ 0';
+    return `R$ ${new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(Math.round(num))}`;
+  };
+
   const formatPercent = (val) => {
     if (val === null || val === undefined || val === '') return '0%';
     const normalized = String(val).trim().replace(/\s+/g, '').replace('%', '').replace(',', '.');
@@ -889,9 +953,35 @@ const SimulationPage = ({ user }) => {
     return Number.isNaN(numeric) ? 0 : numeric;
   };
 
+  const roundTo = (value, decimals = 2) => {
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return 0;
+    const factor = 10 ** decimals;
+    return Math.round((numeric + Number.EPSILON) * factor) / factor;
+  };
+
   const grossPriceForSaveModal = useMemo(() => {
     return Number(grossPrice) || 0;
   }, [grossPrice]);
+
+  const usesTaxesCalculator = [
+    SIMULATION_MODES.GROSS_CALCULATION,
+    SIMULATION_MODES.NET_CALCULATION,
+  ].includes(mode);
+  const showsMinimumPolicyWarnings = [
+    SIMULATION_MODES.MARGIN,
+    SIMULATION_MODES.PRICE,
+  ].includes(mode);
+
+  const hidesCostInput = usesTaxesCalculator;
+
+  const resultLabel = mode === SIMULATION_MODES.MARGIN
+    ? 'Margem Bruta Resultante'
+    : mode === SIMULATION_MODES.PRICE
+      ? 'Preço Bruto Sugerido'
+      : mode === SIMULATION_MODES.NET_CALCULATION
+        ? 'Preço Líquido Calculado'
+        : 'Preço Bruto Calculado';
 
   const currentSimulationDiscount = useMemo(() => {
     const catalogGrossPrice = Number(selectedCatalogEntry?.catalog_gross_price || 0);
@@ -908,21 +998,29 @@ const SimulationPage = ({ user }) => {
 
   const selectedHistoryMetrics = useMemo(() => {
     if (!selectedHistoryItem) return null;
-    const volume = Number(selectedHistoryItem.volume || 0);
-    const catalogPrice = Number(selectedHistoryItem.catalog_price || 0);
-    const catalogGrossPrice = Number(selectedHistoryItem.catalog_gross_price || 0);
-    const catalogMargin = Number(selectedHistoryItem.catalog_margin || 0);
-    const simulatedPrice = Number(selectedHistoryItem.price || 0);
-    const simulatedGrossPrice = Number(selectedHistoryItem.gross_price || 0);
-    const simulatedMargin = Number(selectedHistoryItem.margin || 0);
-    const targetValue = parseCurrencyValue(selectedHistoryItem.target);
+    const volume = Math.round(parseCurrencyValue(selectedHistoryItem.volume || 0));
+    const catalogPrice = roundTo(selectedHistoryItem.catalog_price || 0);
+    const catalogGrossPrice = roundTo(selectedHistoryItem.catalog_gross_price || 0);
+    const catalogMargin = roundTo(normalizeMarginPercentInput(selectedHistoryItem.catalog_margin || 0));
+    const simulatedPrice = roundTo(selectedHistoryItem.price || 0);
+    const simulatedGrossPrice = roundTo(selectedHistoryItem.gross_price || 0);
+    const simulatedMargin = roundTo(normalizeMarginPercentInput(selectedHistoryItem.margin || 0));
+    const targetValue = roundTo(parseCurrencyValue(selectedHistoryItem.target));
     const hasTarget = targetValue > 0;
-    const robCatalog = volume * (catalogGrossPrice || catalogPrice);
-    const robEstimated = volume * (simulatedGrossPrice || simulatedPrice);
-    const mbCatalog = robCatalog * (catalogMargin / 100);
-    const mbEstimated = robEstimated * (simulatedMargin / 100);
-    const priceDiscountAmount = catalogGrossPrice - simulatedGrossPrice;
-    const priceDiscountPercent = catalogGrossPrice > 0 ? (priceDiscountAmount / catalogGrossPrice) * 100 : 0;
+    const robCatalog = roundTo(volume * catalogGrossPrice, 0);
+    const robSimulated = roundTo(volume * simulatedGrossPrice, 0);
+    const mbCatalogAbsolute = roundTo(robCatalog * (catalogMargin / 100), 0);
+    const mbSimulatedAbsolute = roundTo(robSimulated * (simulatedMargin / 100), 0);
+    const priceDiscountAmount = simulatedGrossPrice - catalogGrossPrice;
+    const priceDiscountPercent = catalogGrossPrice > 0 ? ((simulatedGrossPrice / catalogGrossPrice) - 1) * 100 : 0;
+    const targetVsCatalogAmount = hasTarget ? (catalogGrossPrice - targetValue) : null;
+    const targetVsCatalogPercent = hasTarget && targetValue > 0 ? ((catalogGrossPrice / targetValue) - 1) * 100 : null;
+    const targetVsSimulatedAmount = hasTarget ? (simulatedGrossPrice - targetValue) : null;
+    const targetVsSimulatedPercent = hasTarget && targetValue > 0 ? ((simulatedGrossPrice / targetValue) - 1) * 100 : null;
+    const robVariationAmount = roundTo(robSimulated - robCatalog, 0);
+    const robVariationPercent = robCatalog > 0 ? ((robSimulated / robCatalog) - 1) * 100 : 0;
+    const mbVariationAmount = roundTo(mbSimulatedAbsolute - mbCatalogAbsolute, 0);
+    const mbVariationPercent = mbCatalogAbsolute > 0 ? ((mbSimulatedAbsolute / mbCatalogAbsolute) - 1) * 100 : 0;
     return {
       volume,
       catalogPrice,
@@ -932,21 +1030,22 @@ const SimulationPage = ({ user }) => {
       simulatedGrossPrice,
       simulatedMargin,
       robCatalog,
-      robEstimated,
-      mbCatalog,
-      mbEstimated,
+      robSimulated,
+      mbCatalogAbsolute,
+      mbSimulatedAbsolute,
       hasTarget,
       targetValue,
-      targetVsCatalog: hasTarget ? targetValue - catalogGrossPrice : null,
-      targetVsCatalogPercent: hasTarget && catalogGrossPrice > 0 ? ((targetValue - catalogGrossPrice) / catalogGrossPrice) * 100 : null,
-      targetVsSimulated: hasTarget ? targetValue - simulatedGrossPrice : null,
-      targetVsSimulatedPercent: hasTarget && simulatedGrossPrice > 0 ? ((targetValue - simulatedGrossPrice) / simulatedGrossPrice) * 100 : null,
+      targetVsCatalogAmount: roundTo(targetVsCatalogAmount || 0),
+      targetVsCatalogPercent: roundTo(targetVsCatalogPercent || 0, 1),
+      targetVsSimulatedAmount: roundTo(targetVsSimulatedAmount || 0),
+      targetVsSimulatedPercent: roundTo(targetVsSimulatedPercent || 0, 1),
       priceDiscountAmount,
       priceDiscountPercent,
-      grossPriceVariation: simulatedGrossPrice - catalogGrossPrice,
       marginVariationPp: simulatedMargin - catalogMargin,
-      robVariation: robEstimated - robCatalog,
-      mbVariation: mbEstimated - mbCatalog,
+      robVariationAmount,
+      robVariationPercent,
+      mbVariationAmount,
+      mbVariationPercent,
       minimumGrossPrice: Number(selectedHistoryItem.minimum_gross_price || 0),
       minimumMargin: Number(selectedHistoryItem.minimum_margin || 0),
       minimumPolicyStatus: String(selectedHistoryItem.minimum_policy_status || '').trim(),
@@ -1049,16 +1148,37 @@ const SimulationPage = ({ user }) => {
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="simularMargem">Simular Margem</TabsTrigger>
-                  <TabsTrigger value="simularPreco">Simular Preço</TabsTrigger>
-                  <TabsTrigger value="simularPrecoBruto">Simular Preço Bruto</TabsTrigger>
+                <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-1 h-auto p-1">
+                  <TabsTrigger
+                    value={SIMULATION_MODES.MARGIN}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Simular Margem
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value={SIMULATION_MODES.PRICE}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Simular Preço
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value={SIMULATION_MODES.GROSS_CALCULATION}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Cálculo Preço Bruto
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value={SIMULATION_MODES.NET_CALCULATION}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Cálculo Preço Liquido
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
 
               <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border">
-                {/* Cost Input - Restricted View (Hidden in simularPrecoBruto mode) */}
-                {mode !== 'simularPrecoBruto' && (
+                {/* Cost Input - Restricted View */}
+                {!hidesCostInput && (
                   <div className="space-y-2 relative">
                     <Label htmlFor="cost">Custo do Produto</Label>
                     {isPricingUser ? (
@@ -1070,10 +1190,10 @@ const SimulationPage = ({ user }) => {
                           value={cost} 
                           onChange={(e) => setCost(e.target.value)}
                           onBlur={(e) => handleBlur(setCost, e.target.value)}
-                          disabled={mode === 'simularMargem' || mode === 'simularPreco'}
+                          disabled={mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE}
                           className={cn(
                             "pl-8",
-                            (mode === 'simularMargem' || mode === 'simularPreco') && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                            (mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
                           )}
                         />
                       </div>
@@ -1082,14 +1202,14 @@ const SimulationPage = ({ user }) => {
                         {formatCurrency(Number(cost))}
                       </div>
                     )}
-                    {(mode === 'simularMargem' || mode === 'simularPreco') && (
+                    {(mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && (
                        <p className="text-[10px] text-muted-foreground">O custo é fixo baseado no produto selecionado.</p>
                     )}
                   </div>
                 )}
 
                 {/* Dynamic Inputs based on Mode */}
-                {mode === 'simularMargem' ? (
+                {mode === SIMULATION_MODES.MARGIN ? (
                   <div className="space-y-2">
                     <Label htmlFor="grossPrice">Preço bruto (novo)</Label>
                     <div className="relative">
@@ -1107,7 +1227,7 @@ const SimulationPage = ({ user }) => {
                       />
                     </div>
                   </div>
-                ) : mode === 'simularPreco' ? (
+                ) : mode === SIMULATION_MODES.PRICE ? (
                   <div className="space-y-2">
                     <Label htmlFor="margin">Margem Alvo (%)</Label>
                     <div className="relative">
@@ -1120,17 +1240,19 @@ const SimulationPage = ({ user }) => {
                           setHasManualInput(true);
                           setMargin(e.target.value);
                         }}
-                        onBlur={(e) => handleBlur(setMargin, e.target.value)}
+                        onBlur={(e) => handleBlur(setMargin, e.target.value, { normalizePercent: true })}
                         className="pl-8 font-semibold text-lg"
                       />
                     </div>
                   </div>
                 ) : (
-                  // Mode: simularPrecoBruto
+                  // Modes with tax conversion
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="basePrice">Preço Líquido Base</Label>
+                        <Label htmlFor="basePrice">
+                          {mode === SIMULATION_MODES.NET_CALCULATION ? 'Preço Bruto Base' : 'Preço Líquido Base'}
+                        </Label>
                         <Popover>
                           <PopoverTrigger asChild>
                             <button className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors h-[28px]">
@@ -1155,9 +1277,14 @@ const SimulationPage = ({ user }) => {
                                   Operação Interna
                                 </h5>
                                 <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-2 text-xs space-y-1">
-                                  <div className="flex justify-between">
+                                  <div className="flex justify-between gap-3">
                                     <span className="text-gray-600 dark:text-gray-400">SP</span>
-                                    <span className="font-semibold text-gray-900 dark:text-gray-100">18%</span>
+                                    <span className="font-semibold text-right text-gray-900 dark:text-gray-100">
+                                      12% ou 18%
+                                    </span>
+                                  </div>
+                                  <div className="pt-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                    12% para Simples Nacional e 18% para Lucro Real.
                                   </div>
                                 </div>
                               </div>
@@ -1190,22 +1317,15 @@ const SimulationPage = ({ user }) => {
 
                               <div className="space-y-2">
                                 <h5 className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
-                                  Produtos Importados
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                  Observação
                                 </h5>
-                                <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-2 text-xs space-y-1">
-                                  <div className="flex justify-between">
-                                    <span className="text-gray-600 dark:text-gray-400">IM (Importação)</span>
-                                    <span className="font-semibold text-gray-900 dark:text-gray-100">4%</span>
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div className="bg-blue-50 dark:bg-blue-900/10 p-2 rounded-lg border border-blue-100 dark:border-blue-800/30">
+                                <div className="bg-blue-50 dark:bg-blue-900/10 p-2 rounded-lg border border-blue-100 dark:border-blue-800/30">
                                 <p className="text-[10px] text-blue-600 dark:text-blue-400 flex items-center gap-1">
                                   <Info className="w-3 h-3" />
                                   PIS e COFINS são iguais para todos os estados.
                                 </p>
+                                </div>
                               </div>
                             </div>
                           </PopoverContent>
@@ -1216,13 +1336,27 @@ const SimulationPage = ({ user }) => {
                         <Input 
                           id="basePrice" 
                           type="number" 
-                          value={price} 
-                          onChange={(e) => setPrice(e.target.value)}
-                          disabled={true}
+                          value={mode === SIMULATION_MODES.NET_CALCULATION ? grossPrice : price}
+                          onChange={(e) => {
+                            setHasManualInput(true);
+                            if (mode === SIMULATION_MODES.NET_CALCULATION) {
+                              setGrossPrice(e.target.value);
+                            } else {
+                              setPrice(e.target.value);
+                            }
+                          }}
+                          onBlur={(e) => handleBlur(
+                            mode === SIMULATION_MODES.NET_CALCULATION ? setGrossPrice : setPrice,
+                            e.target.value
+                          )}
                           placeholder="0.00"
-                          className="pl-8 font-semibold bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                          className="pl-8 font-semibold"
                         />
-                        <p className="text-[10px] text-muted-foreground mt-1">O preço base é fixo baseado no produto selecionado.</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {mode === SIMULATION_MODES.NET_CALCULATION
+                            ? 'O valor é preenchido pelo catálogo e pode ser alterado manualmente para calcular o preço líquido.'
+                            : 'O valor é preenchido pelo catálogo e pode ser alterado manualmente para calcular o preço bruto.'}
+                        </p>
                       </div>
                     </div>
                     
@@ -1287,18 +1421,20 @@ const SimulationPage = ({ user }) => {
               {/* Main Result */}
               <div className="flex flex-col items-center justify-center p-8 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-slate-800 dark:to-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm">
                 <span className="text-gray-500 dark:text-slate-400 text-sm font-medium uppercase tracking-widest mb-3">
-                  {mode === 'simularMargem' ? 'Margem Bruta Resultante' : 
-                   mode === 'simularPreco' ? 'Preço Bruto Sugerido' : 
-                   'Preço Bruto Calculado'}
+                  {resultLabel}
                 </span>
                 <div className="text-5xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-                  {mode === 'simularMargem' ? (
+                  {mode === SIMULATION_MODES.MARGIN ? (
                     <span className={marginForDisplay < 0 ? "text-red-500" : "text-gray-900 dark:text-white"}>
                       {formatPercent(marginForDisplay)}
                     </span>
-                  ) : mode === 'simularPreco' ? (
+                  ) : mode === SIMULATION_MODES.PRICE ? (
                     <span className="text-[#845AFA]">
                       {formatCurrency(Number(grossPrice))}
+                    </span>
+                  ) : mode === SIMULATION_MODES.NET_CALCULATION ? (
+                    <span className="text-[#845AFA]">
+                      {formatCurrency(Number(price))}
                     </span>
                   ) : (
                     <span className="text-[#845AFA]">
@@ -1314,7 +1450,7 @@ const SimulationPage = ({ user }) => {
                 <div className="mt-4 px-3 py-1.5 rounded-full bg-[#845AFA]/10 border border-[#845AFA]/20 text-xs font-medium text-[#6b46c1] dark:text-purple-300">
                   Margem catalogo: {formatPercent(catalogMarginValue || Number(margin || 0))}
                 </div>
-                {simulationPolicy.hasRule && (
+                {showsMinimumPolicyWarnings && simulationPolicy.hasRule && (
                   <div className={cn(
                     "mt-3 w-full rounded-xl border px-4 py-3 text-left text-sm",
                     simulationPolicy.isBlocked
@@ -1330,8 +1466,8 @@ const SimulationPage = ({ user }) => {
                   </div>
                 )}
                 
-                {/* Tax Breakdown (only for simularPrecoBruto mode) */}
-                {mode === 'simularPrecoBruto' && Number(grossPrice) > 0 && (
+                {/* Tax Breakdown */}
+                {usesTaxesCalculator && Number(grossPrice) > 0 && (
                    <div className="mt-4 flex gap-3 text-xs text-gray-500 dark:text-slate-400">
                       <span className="px-2 py-1 bg-gray-200 dark:bg-slate-700 rounded">PIS: {pis}%</span>
                       <span className="px-2 py-1 bg-gray-200 dark:bg-slate-700 rounded">COFINS: {cofins}%</span>
@@ -1665,20 +1801,20 @@ const SimulationPage = ({ user }) => {
                         </div>
                       </div>
                       <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
-                        <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Catálogo</div>
-                        <div className={cn("mt-1 font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsCatalog < 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
-                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsCatalog) : 'Nao informado'}
+                        <div className="text-center text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Catálogo</div>
+                        <div className={cn("mt-1 text-center font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsCatalogAmount > 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
+                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsCatalogAmount) : 'Nao informado'}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-center text-xs text-muted-foreground">
                           {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsCatalogPercent) : '-'}
                         </div>
                       </div>
                       <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
-                        <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Simulado</div>
-                        <div className={cn("mt-1 font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsSimulated < 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
-                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsSimulated) : 'Nao informado'}
+                        <div className="text-center text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Target vs Simulado</div>
+                        <div className={cn("mt-1 text-center font-semibold", !selectedHistoryMetrics.hasTarget ? "text-gray-500 dark:text-gray-400" : selectedHistoryMetrics.targetVsSimulatedAmount > 0 ? "text-red-600 dark:text-red-400" : "text-green-700 dark:text-green-400")}>
+                          {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsSimulatedAmount) : 'Nao informado'}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-center text-xs text-muted-foreground">
                           {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsSimulatedPercent) : '-'}
                         </div>
                       </div>
@@ -1703,8 +1839,8 @@ const SimulationPage = ({ user }) => {
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Líquido</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.catalogPrice)}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Bruto</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.catalogGrossPrice)}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Margem</span><span className="font-medium">{formatPercent(selectedHistoryMetrics.catalogMargin)}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.robCatalog)}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.mbCatalog)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrencyRounded(selectedHistoryMetrics.robCatalog)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB absoluta</span><span className="font-medium">{formatCurrencyRounded(selectedHistoryMetrics.mbCatalogAbsolute)}</span></div>
                     </div>
                   </div>
                   <div className="p-4 rounded-xl border border-[#845AFA]/20 dark:border-[#845AFA]/30 bg-white dark:bg-[#1a1a1a]">
@@ -1713,8 +1849,8 @@ const SimulationPage = ({ user }) => {
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Líquido</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.simulatedPrice)}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Preço Bruto</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.simulatedGrossPrice)}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Margem</span><span className="font-medium">{formatPercent(selectedHistoryMetrics.simulatedMargin)}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.robEstimated)}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB</span><span className="font-medium">{formatCurrency(selectedHistoryMetrics.mbEstimated)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">ROB</span><span className="font-medium">{formatCurrencyRounded(selectedHistoryMetrics.robSimulated)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">MB absoluta</span><span className="font-medium">{formatCurrencyRounded(selectedHistoryMetrics.mbSimulatedAbsolute)}</span></div>
                     </div>
                   </div>
                 </div>
@@ -1733,38 +1869,38 @@ const SimulationPage = ({ user }) => {
                     )}
                   </div>
                 ) : null}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Desconto Preço</div>
-                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.priceDiscountPercent > 0 ? "text-red-500" : selectedHistoryMetrics.priceDiscountPercent < 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-900 dark:text-gray-100")}>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-[#181818]">
+                    <div className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Desconto Preço vs Catálogo</div>
+                    <div className={cn("mt-1 text-lg font-bold", selectedHistoryMetrics.priceDiscountPercent < 0 ? "text-red-500" : selectedHistoryMetrics.priceDiscountPercent > 0 ? "text-green-600 dark:text-green-400" : "text-gray-900 dark:text-gray-100")}>
                       {formatPercent(selectedHistoryMetrics.priceDiscountPercent)}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
                       {formatCurrency(selectedHistoryMetrics.priceDiscountAmount)}
                     </div>
                   </div>
-                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Preço Bruto</div>
-                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.grossPriceVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
-                      {formatCurrency(selectedHistoryMetrics.grossPriceVariation)}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Margem</div>
-                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.marginVariationPp < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-[#181818]">
+                    <div className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. Margem</div>
+                    <div className={cn("mt-1 text-lg font-bold", selectedHistoryMetrics.marginVariationPp < 0 ? "text-red-500" : selectedHistoryMetrics.marginVariationPp > 0 ? "text-green-600 dark:text-green-400" : "text-gray-900 dark:text-gray-100")}>
                       {selectedHistoryMetrics.marginVariationPp.toFixed(2)} p.p.
                     </div>
                   </div>
-                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. ROB</div>
-                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.robVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
-                      {formatCurrency(selectedHistoryMetrics.robVariation)}
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-[#181818]">
+                    <div className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. ROB</div>
+                    <div className={cn("mt-1 text-lg font-bold", selectedHistoryMetrics.robVariationPercent < 0 ? "text-red-500" : selectedHistoryMetrics.robVariationPercent > 0 ? "text-green-600 dark:text-green-400" : "text-gray-900 dark:text-gray-100")}>
+                      {formatPercent(selectedHistoryMetrics.robVariationPercent)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {formatCurrencyRounded(selectedHistoryMetrics.robVariationAmount)}
                     </div>
                   </div>
-                  <div className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#181818]">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. MB</div>
-                    <div className={cn("text-lg font-bold mt-1", selectedHistoryMetrics.mbVariation < 0 ? "text-red-500" : "text-green-600 dark:text-green-400")}>
-                      {formatCurrency(selectedHistoryMetrics.mbVariation)}
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-[#181818]">
+                    <div className="whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Var. MB</div>
+                    <div className={cn("mt-1 text-lg font-bold", selectedHistoryMetrics.mbVariationPercent < 0 ? "text-red-500" : selectedHistoryMetrics.mbVariationPercent > 0 ? "text-green-600 dark:text-green-400" : "text-gray-900 dark:text-gray-100")}>
+                      {formatPercent(selectedHistoryMetrics.mbVariationPercent)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {formatCurrencyRounded(selectedHistoryMetrics.mbVariationAmount)}
                     </div>
                   </div>
                 </div>

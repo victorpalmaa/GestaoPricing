@@ -112,6 +112,18 @@ const CATALOG_CONFIG = {
     editTitle: 'Editar registro do Catálogo Brasil',
     icon: BrazilMapIcon,
     preserveDatasulCode: true,
+    parameters: {
+      freight: 'FOB',
+      paymentTerm: 'À vista',
+      taxes: [
+        { label: 'PIS e COFINS', value: '9.25%' },
+        { label: 'ICMS', value: '12%' },
+      ],
+      serviceValues: [
+        { label: 'Gomas', value: 'Full service Ekobé' },
+        { label: 'Softgel', value: 'Full service HLCaps' },
+      ],
+    },
     importAliases: {
       id: ['ID', 'id'],
       sku: ['SKU', 'sku'],
@@ -150,6 +162,13 @@ const CATALOG_CONFIG = {
     ptaxLabel: 'PTAX',
     ptaxValue: 'R$ 4,48',
     preserveDatasulCode: false,
+    parameters: {
+      freight: 'EX WORKS',
+      paymentTerm: 'À vista',
+      taxes: [
+        { label: 'Impostos', value: '0%' },
+      ],
+    },
     importAliases: {
       id: ['ID', 'id'],
       sku: ['SKU', 'sku'],
@@ -250,7 +269,7 @@ const CatalogoPro = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [fullModeFilters, setFullModeFilters] = useState({
-    sku: '',
+    sku: [],
     category: '',
     volume: '',
   });
@@ -262,6 +281,8 @@ const CatalogoPro = ({ user }) => {
   const [editingRow, setEditingRow] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editForm, setEditForm] = useState({
+    catalogId: '',
+    cost: '',
     margin: '',
     primaryPrice: '',
     secondaryPrice: '',
@@ -346,7 +367,7 @@ const CatalogoPro = ({ user }) => {
   }, []);
 
   useEffect(() => {
-    setFullModeFilters({ sku: '', category: '', volume: '' });
+    setFullModeFilters({ sku: [], category: '', volume: '' });
     setErrorMessage('');
     setCatalogRows([]);
 
@@ -400,7 +421,8 @@ const CatalogoPro = ({ user }) => {
 
   const filteredFullRows = useMemo(() => {
     return sortedCatalogRows.filter((row) => {
-      const matchesSku = !fullModeFilters.sku || row.sku === fullModeFilters.sku;
+      const selectedSkus = Array.isArray(fullModeFilters.sku) ? fullModeFilters.sku : [];
+      const matchesSku = selectedSkus.length === 0 || selectedSkus.includes(row.sku);
       const matchesVolume = !fullModeFilters.volume || Number(row?.volume) === Number(fullModeFilters.volume);
       const matchesCategory = !fullModeFilters.category || row?.category === fullModeFilters.category;
       return matchesSku && matchesVolume && matchesCategory;
@@ -408,12 +430,14 @@ const CatalogoPro = ({ user }) => {
   }, [sortedCatalogRows, fullModeFilters]);
 
   const hasActiveFullFilters = Boolean(
-    fullModeFilters.sku || fullModeFilters.category || fullModeFilters.volume
+    (Array.isArray(fullModeFilters.sku) && fullModeFilters.sku.length > 0)
+    || fullModeFilters.category
+    || fullModeFilters.volume
   );
 
   const handleBackToSelection = () => {
     setSelectedCatalog('');
-    setFullModeFilters({ sku: '', category: '', volume: '' });
+    setFullModeFilters({ sku: [], category: '', volume: '' });
     setShowImportDialog(false);
     setSelectedImportFile(null);
     setEditOpen(false);
@@ -663,6 +687,8 @@ const CatalogoPro = ({ user }) => {
     if (!row?.id || !isPricingUser || !selectedCatalogConfig) return;
     setEditingRow(row);
     setEditForm({
+      catalogId: row?.[selectedCatalogConfig.idField] ?? '',
+      cost: row?.[selectedCatalogConfig.costField] ?? '',
       margin: row?.[selectedCatalogConfig.marginField] ?? '',
       primaryPrice: row?.[selectedCatalogConfig.primaryPriceField] ?? '',
       secondaryPrice: row?.[selectedCatalogConfig.secondaryPriceField] ?? '',
@@ -673,13 +699,15 @@ const CatalogoPro = ({ user }) => {
   const handleSaveEdit = async () => {
     if (!editingRow?.id || !isPricingUser || !selectedCatalogConfig) return;
 
+    const catalogId = String(editForm.catalogId || '').trim();
+    const catalogCost = parseNumber(editForm.cost);
     const catalogMargin = parseNumber(editForm.margin);
     const primaryPrice = parseNumber(editForm.primaryPrice);
     const secondaryPrice = parseNumber(editForm.secondaryPrice);
 
-    if ([catalogMargin, primaryPrice, secondaryPrice].some((value) => value === null)) {
+    if (!catalogId || [catalogCost, catalogMargin, primaryPrice, secondaryPrice].some((value) => value === null)) {
       toast.error(
-        `Preencha Margem, ${selectedCatalogConfig.pricingPrimaryPriceLabel} e ${selectedCatalogConfig.pricingSecondaryPriceLabel} com valores válidos.`
+        `Preencha ID, Custo, Margem, ${selectedCatalogConfig.pricingPrimaryPriceLabel} e ${selectedCatalogConfig.pricingSecondaryPriceLabel} com valores válidos.`
       );
       return;
     }
@@ -689,6 +717,8 @@ const CatalogoPro = ({ user }) => {
       const { error } = await supabase
         .from(selectedCatalogConfig.tableName)
         .update({
+          [selectedCatalogConfig.idField]: catalogId,
+          [selectedCatalogConfig.costField]: catalogCost,
           [selectedCatalogConfig.marginField]: catalogMargin,
           [selectedCatalogConfig.primaryPriceField]: primaryPrice,
           [selectedCatalogConfig.secondaryPriceField]: secondaryPrice,
@@ -918,16 +948,30 @@ const CatalogoPro = ({ user }) => {
                     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-xs space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Frete</span>
-                        <span className="font-semibold text-gray-900 dark:text-gray-100">EX WORKS</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">
+                          {selectedCatalogConfig?.parameters?.freight || '—'}
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">Prazo</span>
-                        <span className="font-semibold text-gray-900 dark:text-gray-100">À vista</span>
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">
+                          {selectedCatalogConfig?.parameters?.paymentTerm || '—'}
+                        </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Impostos</span>
-                        <span className="font-semibold text-gray-900 dark:text-gray-100">0%</span>
-                      </div>
+                      {(selectedCatalogConfig?.parameters?.taxes || []).map((tax) => (
+                        <div key={tax.label} className="flex justify-between gap-3">
+                          <span className="text-gray-600 dark:text-gray-400">{tax.label}</span>
+                          <span className="font-semibold text-right text-gray-900 dark:text-gray-100">{tax.value}</span>
+                        </div>
+                      ))}
+                      {(selectedCatalogConfig?.parameters?.serviceValues || []).map((serviceValue) => (
+                        <div key={serviceValue.label} className="flex justify-between gap-3">
+                          <span className="text-gray-600 dark:text-gray-400">{serviceValue.label}</span>
+                          <span className="font-semibold text-right text-gray-900 dark:text-gray-100">
+                            {serviceValue.value}
+                          </span>
+                        </div>
+                      ))}
                       {selectedCatalogConfig?.ptaxLabel && selectedCatalogConfig?.ptaxValue && (
                         <div className="flex justify-between">
                           <span className="text-gray-600 dark:text-gray-400">{selectedCatalogConfig.ptaxLabel}</span>
@@ -1077,7 +1121,7 @@ const CatalogoPro = ({ user }) => {
                   </div>
                   {hasActiveFullFilters && (
                     <button
-                      onClick={() => setFullModeFilters({ sku: '', category: '', volume: '' })}
+                      onClick={() => setFullModeFilters({ sku: [], category: '', volume: '' })}
                       className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-400 rounded-full transition-colors"
                     >
                       <X size={14} />
@@ -1098,7 +1142,36 @@ const CatalogoPro = ({ user }) => {
                     onChange={(value) => setFullModeFilters((prev) => ({ ...prev, sku: value }))}
                     placeholder="Todos os SKUs"
                     searchPlaceholder="Buscar SKU..."
+                    multiSelect
+                    multiSelectLabel={(labels) =>
+                      labels.length === 1 ? labels[0] : `${labels.length} SKUs selecionados`
+                    }
                   />
+                  {Array.isArray(fullModeFilters.sku) && fullModeFilters.sku.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      {fullModeFilters.sku.map((selectedSku) => (
+                        <span
+                          key={selectedSku}
+                          className="inline-flex items-center gap-1 rounded-full bg-[#845AFA]/10 px-3 py-1 text-xs font-medium text-[#6b46c1] dark:bg-[#845AFA]/20 dark:text-purple-200"
+                        >
+                          {selectedSku}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFullModeFilters((prev) => ({
+                                ...prev,
+                                sku: prev.sku.filter((item) => item !== selectedSku),
+                              }))
+                            }
+                            className="rounded-full text-[#6b46c1] transition-colors hover:text-[#4c1d95] dark:text-purple-200 dark:hover:text-white"
+                            aria-label={`Remover ${selectedSku}`}
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Categoria</Label>
@@ -1226,7 +1299,7 @@ const CatalogoPro = ({ user }) => {
               {selectedCatalogConfig?.editTitle || 'Editar registro do catálogo'}
             </DialogTitle>
             <DialogDescription>
-              Atualize Margem, {selectedCatalogConfig?.pricingPrimaryPriceLabel || 'Preço Líquido'} e {selectedCatalogConfig?.pricingSecondaryPriceLabel || 'Preço Bruto'} para o registro selecionado.
+              Atualize ID, Custo, Margem, {selectedCatalogConfig?.pricingPrimaryPriceLabel || 'Preço Líquido'} e {selectedCatalogConfig?.pricingSecondaryPriceLabel || 'Preço Bruto'} para o registro selecionado.
             </DialogDescription>
           </DialogHeader>
 
@@ -1236,6 +1309,26 @@ const CatalogoPro = ({ user }) => {
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 ID: {editingRow?.[selectedCatalogConfig?.idField] || '—'} | Volume: {formatVolume(editingRow?.volume)}
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-id">ID</Label>
+              <Input
+                id="edit-id"
+                value={editForm.catalogId}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, catalogId: event.target.value }))}
+                placeholder="Ex.: CAT-001"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-cost">Custo</Label>
+              <Input
+                id="edit-cost"
+                value={editForm.cost}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, cost: event.target.value }))}
+                placeholder="Ex.: 29,90"
+              />
             </div>
 
             <div className="space-y-2">
