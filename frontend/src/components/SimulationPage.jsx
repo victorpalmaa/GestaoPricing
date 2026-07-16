@@ -774,7 +774,7 @@ const SimulationPage = ({ user }) => {
       toast.success('Simulação salva com sucesso!');
       setShowSaveModal(false);
       setSaveForm({ clientName: '', target: '', observations: '' });
-      if (isPricingUser) loadHistory();
+      loadHistory();
       
     } catch (error) {
       console.error('Error saving simulation:', error);
@@ -1508,111 +1508,110 @@ const SimulationPage = ({ user }) => {
           </Card>
         </div>
 
-        {/* History Log - Only for Pricing */}
-        {isPricingUser && (
-          <div className="mt-12">
-            <Card className="shadow-lg h-full">
-              <CardHeader>
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <History className="w-5 h-5 text-gray-500" />
-                  Histórico de simulações
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-y-auto max-h-[600px] -mx-6 px-6">
-                  <Table className="w-full table-auto">
-                    <TableHeader>
+        <div className="mt-12">
+          <Card className="shadow-lg h-full">
+            <CardHeader>
+              <CardTitle className="text-xl flex items-center gap-2">
+                <History className="w-5 h-5 text-gray-500" />
+                Histórico de simulações
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-y-auto max-h-[600px] -mx-6 px-6">
+                <Table className="w-full table-auto">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-left">ID</TableHead>
+                      <TableHead className="text-left">Produto</TableHead>
+                      <TableHead className="text-left">Volume</TableHead>
+                      <TableHead className="text-left">Custo Total</TableHead>
+                      <TableHead className="text-left">Margem</TableHead>
+                      <TableHead className="text-left">Preço Liq.</TableHead>
+                      <TableHead className="text-left">Preço Bruto</TableHead>
+                      <TableHead className="text-left">Status</TableHead>
+                      <TableHead className="text-left">Usuário / Data</TableHead>
+                      {isPricingUser && <TableHead className="text-left">Ações</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.length === 0 ? (
                       <TableRow>
-                        <TableHead className="text-left">ID</TableHead>
-                        <TableHead className="text-left">Produto</TableHead>
-                        <TableHead className="text-left">Volume</TableHead>
-                        <TableHead className="text-left">Custo Total</TableHead>
-                        <TableHead className="text-left">Margem</TableHead>
-                        <TableHead className="text-left">Preço Liq.</TableHead>
-                        <TableHead className="text-left">Preço Bruto</TableHead>
-                        <TableHead className="text-left">Status</TableHead>
-                        <TableHead className="text-left">Usuário / Data</TableHead>
-                        <TableHead className="text-left">Ações</TableHead>
+                        <TableCell colSpan={isPricingUser ? 10 : 9} className="text-center py-8 text-muted-foreground">
+                          Nenhuma simulação registrada
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {history.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                            Nenhuma simulação registrada
+                    ) : (
+                      history.map((item) => (
+                        <TableRow
+                          key={item.id}
+                          className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer"
+                          onClick={() => {
+                            setSelectedHistoryItem(item);
+                            setShowHistoryObservations(false);
+                            setIsClosingHistoryDetailModal(false);
+                            setShowHistoryDetailModal(true);
+                          }}
+                        >
+                          <TableCell className="text-xs font-mono text-gray-500 align-top">
+                            {item.simulation_number || item.id.substring(0, 8)}
                           </TableCell>
-                        </TableRow>
-                      ) : (
-                        history.map((item) => (
-                          <TableRow
-                            key={item.id}
-                            className="hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer"
-                            onClick={() => {
-                              setSelectedHistoryItem(item);
-                              setShowHistoryObservations(false);
-                              setIsClosingHistoryDetailModal(false);
-                              setShowHistoryDetailModal(true);
-                            }}
-                          >
-                            <TableCell className="text-xs font-mono text-gray-500 align-top">
-                              {item.simulation_number || item.id.substring(0, 8)}
-                            </TableCell>
-                            <TableCell className="font-medium text-xs leading-tight break-words align-top" title={item.product_name}>
-                              {item.product_name}
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              {item.volume || '-'}
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              {formatCurrency(item.cost)}
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              <Badge variant={item.margin < 10 ? "destructive" : "secondary"} className="text-[10px]">
-                                {formatPercent(item.margin)}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              {formatCurrency(item.price)}
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              {item.gross_price ? formatCurrency(item.gross_price) : '-'}
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                              <Badge className={cn("text-[10px] border", approvalStatusUi[getApprovalStatus(item)].badgeClass)}>
-                                {approvalStatusUi[getApprovalStatus(item)].label}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs align-top">
-                             <div className="flex flex-col items-start">
-                                <span className="font-medium">{getDisplayName(item.user_name_from_users || item.user_name, item.user_email)}</span>
-                                <span className="text-[10px] text-muted-foreground">
-                                  {format(new Date(item.created_at), "dd/MM/yy HH:mm", { locale: ptBR })}
-                                </span>
-                             </div>
+                          <TableCell className="font-medium text-xs leading-tight break-words align-top" title={item.product_name}>
+                            {item.product_name}
                           </TableCell>
+                          <TableCell className="text-xs align-top">
+                            {item.volume || '-'}
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                            {formatCurrency(item.cost)}
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                            <Badge variant={item.margin < 10 ? "destructive" : "secondary"} className="text-[10px]">
+                              {formatPercent(item.margin)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                            {formatCurrency(item.price)}
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                            {item.gross_price ? formatCurrency(item.gross_price) : '-'}
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                            <Badge className={cn("text-[10px] border", approvalStatusUi[getApprovalStatus(item)].badgeClass)}>
+                              {approvalStatusUi[getApprovalStatus(item)].label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs align-top">
+                           <div className="flex flex-col items-start">
+                              <span className="font-medium">{getDisplayName(item.user_name_from_users || item.user_name, item.user_email)}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {format(new Date(item.created_at), "dd/MM/yy HH:mm", { locale: ptBR })}
+                              </span>
+                           </div>
+                        </TableCell>
+                          {isPricingUser && (
                             <TableCell className="align-top">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleteConfirmItem(item);
-                              }}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirmItem(item);
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <AlertDialog
           open={Boolean(deleteConfirmItem)}
