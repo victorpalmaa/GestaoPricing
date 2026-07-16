@@ -75,6 +75,14 @@ const normalizeLookupValue = (value) =>
     .trim()
     .toLowerCase();
 
+const DRE_APPROVED_MARGINS = [
+  { category: 'Pó', margin: '20,32%' },
+  { category: 'Gel', margin: '48,41%' },
+  { category: 'Cápsulas', margin: '8,56%' },
+  { category: 'Pastilha', margin: '57,09%' },
+  { category: 'Dr Simi', margin: '45,91%' },
+];
+
 const parseSpreadsheetNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isNaN(value) ? null : value;
@@ -176,10 +184,15 @@ const SimulationPage = ({ user }) => {
   
   const [history, setHistory] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
+  const [clients, setClients] = useState([]);
   const [minimumRules, setMinimumRules] = useState([]);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [importingMinimumRules, setImportingMinimumRules] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showDreInfoModal, setShowDreInfoModal] = useState(false);
   const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
+  const [selectedBaseClient, setSelectedBaseClient] = useState(null);
   const [saveForm, setSaveForm] = useState({
     clientName: '',
     target: '',
@@ -246,6 +259,28 @@ const SimulationPage = ({ user }) => {
   useEffect(() => {
     loadMinimumRules();
   }, [loadMinimumRules]);
+
+  useEffect(() => {
+    const loadClients = async () => {
+      try {
+        setLoadingClients(true);
+        const { data, error } = await supabase
+          .from('clients')
+          .select('id, name')
+          .order('name', { ascending: true });
+
+        if (error) throw error;
+        setClients(data || []);
+      } catch (error) {
+        console.error('Error loading clients:', error);
+        setClients([]);
+      } finally {
+        setLoadingClients(false);
+      }
+    };
+
+    loadClients();
+  }, []);
 
   // Generate options for the select
   const productOptions = useMemo(() => {
@@ -725,17 +760,31 @@ const SimulationPage = ({ user }) => {
 
   const handleSaveSimulation = async () => {
     if (!user) return;
-    if (!saveForm.clientName.trim()) {
+    const typedClientName = saveForm.clientName.trim();
+    if (!typedClientName) {
       toast.error('Cliente é obrigatório.');
       return;
     }
 
     try {
       setLoading(true);
+      const baseClient = selectedBaseClient && selectedBaseClient.name === typedClientName
+        ? selectedBaseClient
+        : null;
+      const normalizedClientName = baseClient?.name || typedClientName;
       const parsedPrice = Number(price) || 0;
       const parsedCost = Number(cost) || 0;
       const parsedMargin = Number(margin) || 0;
       const parsedGrossPrice = Number(grossPrice) || 0;
+      const parsedTargetValue = (() => {
+        const normalized = String(saveForm.target || '')
+          .replace(/[R$\s]/g, '')
+          .replace(/\./g, '')
+          .replace(',', '.')
+          .trim();
+        const numeric = Number(normalized);
+        return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+      })();
 
       const error = await insertSimulationHistory({
         user_id: user.id,
@@ -753,8 +802,11 @@ const SimulationPage = ({ user }) => {
         gross_price: parsedGrossPrice,
         user_email: user.email,
         user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
-        client_name: saveForm.clientName.trim(),
+        client_name: normalizedClientName,
+        client_id: baseClient?.id || null,
+        client_source: baseClient ? 'base' : 'manual',
         target: saveForm.target?.trim() || null,
+        target_value: parsedTargetValue,
         observations: saveForm.observations?.trim() || null,
         catalog_cost: Number(selectedCatalogEntry?.catalog_cost || 0),
         catalog_price: Number(selectedCatalogEntry?.catalog_price || 0),
@@ -774,6 +826,7 @@ const SimulationPage = ({ user }) => {
       toast.success('Simulação salva com sucesso!');
       setShowSaveModal(false);
       setSaveForm({ clientName: '', target: '', observations: '' });
+      setSelectedBaseClient(null);
       loadHistory();
       
     } catch (error) {
@@ -799,6 +852,29 @@ const SimulationPage = ({ user }) => {
       }
     }
     return 'Usuário';
+  };
+
+  const isHistoryClientFromBase = useCallback((item) => {
+    const explicitSource = String(item?.client_source || '').trim().toLowerCase();
+    if (explicitSource === 'base') return true;
+    if (explicitSource === 'manual') return false;
+    if (item?.client_id) return true;
+
+    const clientName = String(item?.client_name || '').trim();
+    if (!clientName) return false;
+
+    const normalizedHistoryClientName = normalizeLookupValue(clientName);
+    return (clients || []).some((client) => {
+      return normalizeLookupValue(client.name) === normalizedHistoryClientName;
+    });
+  }, [clients]);
+
+  const formatHistoryClientName = (item) => {
+    const clientName = String(item?.client_name || '').trim();
+    if (!clientName) return '-';
+
+    const isBaseClient = isHistoryClientFromBase(item);
+    return isBaseClient ? `${clientName} (base)` : clientName;
   };
 
   const handleDeleteSimulation = async (simulationId) => {
@@ -935,6 +1011,24 @@ const SimulationPage = ({ user }) => {
     }).format(percentageValue)}%`;
   };
 
+  const formatPercentFixed = (val, decimals = 1) => {
+    if (val === null || val === undefined || val === '') {
+      return `${(0).toLocaleString('pt-BR', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      })}%`;
+    }
+
+    const normalized = String(val).trim().replace(/\s+/g, '').replace('%', '').replace(',', '.');
+    const num = Number(normalized);
+    const percentageValue = Number.isNaN(num) ? 0 : (Math.abs(num) <= 1 ? num * 100 : num);
+
+    return `${percentageValue.toLocaleString('pt-BR', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })}%`;
+  };
+
   const formatCurrencyInput = (value) => {
     const digits = String(value || '').replace(/\D/g, '');
     const numeric = Number(digits) / 100;
@@ -963,6 +1057,32 @@ const SimulationPage = ({ user }) => {
   const grossPriceForSaveModal = useMemo(() => {
     return Number(grossPrice) || 0;
   }, [grossPrice]);
+
+  const resolvedSaveClient = useMemo(() => {
+    return {
+      matchedClient: selectedBaseClient,
+      isBaseClient: Boolean(
+        selectedBaseClient && selectedBaseClient.name === saveForm.clientName.trim()
+      ),
+      displayName: selectedBaseClient?.name || saveForm.clientName.trim(),
+    };
+  }, [selectedBaseClient, saveForm.clientName]);
+
+  const filteredClientSuggestions = useMemo(() => {
+    const typedValue = normalizeLookupValue(saveForm.clientName);
+    const normalizedExactMatch = typedValue;
+
+    return (clients || [])
+      .filter((client) => {
+        const clientName = String(client.name || '');
+        const normalizedClientName = normalizeLookupValue(clientName);
+
+        if (!typedValue) return true;
+        return normalizedClientName.includes(typedValue);
+      })
+      .filter((client) => normalizeLookupValue(client.name) !== normalizedExactMatch)
+      .slice(0, 8);
+  }, [clients, saveForm.clientName]);
 
   const usesTaxesCalculator = [
     SIMULATION_MODES.GROSS_CALCULATION,
@@ -1005,7 +1125,10 @@ const SimulationPage = ({ user }) => {
     const simulatedPrice = roundTo(selectedHistoryItem.price || 0);
     const simulatedGrossPrice = roundTo(selectedHistoryItem.gross_price || 0);
     const simulatedMargin = roundTo(normalizeMarginPercentInput(selectedHistoryItem.margin || 0));
-    const targetValue = roundTo(parseCurrencyValue(selectedHistoryItem.target));
+    const numericTarget = Number(selectedHistoryItem.target_value);
+    const targetValue = roundTo(Number.isFinite(numericTarget) && numericTarget > 0
+      ? numericTarget
+      : parseCurrencyValue(selectedHistoryItem.target));
     const hasTarget = targetValue > 0;
     const robCatalog = roundTo(volume * catalogGrossPrice, 0);
     const robSimulated = roundTo(volume * simulatedGrossPrice, 0);
@@ -1400,7 +1523,16 @@ const SimulationPage = ({ user }) => {
               </div>
 
             </CardContent>
-            <CardFooter>
+            <CardFooter className="flex-col gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowDreInfoModal(true)}
+                className="w-full border-[#845AFA]/30 bg-[#845AFA]/10 text-[#6b46c1] hover:bg-[#845AFA]/15 dark:border-[#845AFA]/40 dark:bg-[#845AFA]/15 dark:text-purple-200 dark:hover:bg-[#845AFA]/20 shadow-sm"
+              >
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                MB considerada no DRE
+              </Button>
               <Button onClick={handleOpenSaveSimulation} className="w-full bg-[#845AFA] hover:bg-[#6b46c1] text-white" disabled={loading}>
                 {loading ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : <History className="w-4 h-4 mr-2" />}
                 Salvar Simulação
@@ -1522,9 +1654,9 @@ const SimulationPage = ({ user }) => {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-left">ID</TableHead>
+                      <TableHead className="text-left">Cliente</TableHead>
                       <TableHead className="text-left">Produto</TableHead>
                       <TableHead className="text-left">Volume</TableHead>
-                      <TableHead className="text-left">Custo Total</TableHead>
                       <TableHead className="text-left">Margem</TableHead>
                       <TableHead className="text-left">Preço Liq.</TableHead>
                       <TableHead className="text-left">Preço Bruto</TableHead>
@@ -1555,14 +1687,14 @@ const SimulationPage = ({ user }) => {
                           <TableCell className="text-xs font-mono text-gray-500 align-top">
                             {item.simulation_number || item.id.substring(0, 8)}
                           </TableCell>
+                          <TableCell className="text-xs align-top font-medium leading-tight break-words" title={formatHistoryClientName(item)}>
+                            {formatHistoryClientName(item)}
+                          </TableCell>
                           <TableCell className="font-medium text-xs leading-tight break-words align-top" title={item.product_name}>
                             {item.product_name}
                           </TableCell>
                           <TableCell className="text-xs align-top">
                             {item.volume || '-'}
-                          </TableCell>
-                          <TableCell className="text-xs align-top">
-                            {formatCurrency(item.cost)}
                           </TableCell>
                           <TableCell className="text-xs align-top">
                             <Badge variant={item.margin < 10 ? "destructive" : "secondary"} className="text-[10px]">
@@ -1678,11 +1810,56 @@ const SimulationPage = ({ user }) => {
               </div>
               <div className="space-y-2">
                 <Label>Cliente *</Label>
-                <Input
-                  value={saveForm.clientName}
-                  onChange={(e) => setSaveForm(prev => ({ ...prev, clientName: e.target.value }))}
-                  placeholder="Informe o cliente"
-                />
+                <div className="relative">
+                  <Input
+                    value={saveForm.clientName}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setSaveForm(prev => ({ ...prev, clientName: e.target.value }));
+                      if (!selectedBaseClient || selectedBaseClient.name !== nextValue) {
+                        setSelectedBaseClient(null);
+                      }
+                      setShowClientSuggestions(true);
+                    }}
+                    onFocus={() => setShowClientSuggestions(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => {
+                        setShowClientSuggestions(false);
+                      }, 120);
+                    }}
+                    placeholder={loadingClients ? 'Carregando clientes...' : 'Selecione da base ou digite um novo cliente'}
+                  />
+                  {showClientSuggestions && filteredClientSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                      {filteredClientSuggestions.map((client) => (
+                        <button
+                          key={client.id}
+                          type="button"
+                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-900 hover:bg-[#845AFA]/10 dark:text-gray-100 dark:hover:bg-[#845AFA]/20"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            setSelectedBaseClient(client);
+                            setSaveForm((prev) => ({ ...prev, clientName: client.name }));
+                            setShowClientSuggestions(false);
+                          }}
+                        >
+                          <span className="truncate">{client.name}</span>
+                          <span className="ml-3 text-[11px] text-[#6b46c1] dark:text-purple-300">Base</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className={cn(
+                  "text-xs",
+                  resolvedSaveClient.isBaseClient
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-muted-foreground"
+                )}>
+                  {resolvedSaveClient.isBaseClient
+                    ? `Cliente encontrado na base e será exibido como ${resolvedSaveClient.displayName} (base) no histórico.`
+                    : 'Cliente digitado será salvo como novo. Para marcar como base, selecione um item da lista.'}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Target</Label>
@@ -1702,9 +1879,51 @@ const SimulationPage = ({ user }) => {
                 />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowSaveModal(false)}>Cancelar</Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowSaveModal(false);
+                    setSelectedBaseClient(null);
+                  }}
+                >
+                  Cancelar
+                </Button>
                 <Button onClick={handleSaveSimulation} disabled={loading} className="bg-[#845AFA] hover:bg-[#6b46c1] text-white">
                   Confirmar e Salvar
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDreInfoModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#171717] rounded-xl w-full max-w-md border border-amber-200 dark:border-amber-800/40 shadow-2xl overflow-hidden">
+              <div className="bg-[#845AFA]/10 dark:bg-[#845AFA]/20 border-b border-[#845AFA]/20 dark:border-[#845AFA]/30 px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-full bg-[#845AFA]/15 dark:bg-[#845AFA]/25 p-2">
+                    <AlertTriangle className="w-5 h-5 text-[#6b46c1] dark:text-purple-200" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-[#6b46c1] dark:text-purple-100">MB considerada no DRE</h3>
+                    <p className="text-sm text-[#6b46c1]/80 dark:text-purple-200/80">Consulta para referência das simulações.</p>
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                {DRE_APPROVED_MARGINS.map((item) => (
+                  <div
+                    key={item.category}
+                    className="flex items-center justify-between rounded-lg border border-[#845AFA]/10 bg-[#845AFA]/5 px-4 py-3 text-sm dark:border-[#845AFA]/20 dark:bg-[#845AFA]/10"
+                  >
+                    <span className="font-medium text-gray-800 dark:text-gray-100">{item.category}</span>
+                    <span className="text-base font-bold text-[#6b46c1] dark:text-purple-200">{item.margin}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-6 pb-5 flex justify-end">
+                <Button variant="outline" onClick={() => setShowDreInfoModal(false)}>
+                  Fechar
                 </Button>
               </div>
             </div>
@@ -1786,7 +2005,7 @@ const SimulationPage = ({ user }) => {
                     <div>
                       <div className="text-[11px] uppercase tracking-wide text-[#845AFA] dark:text-purple-300">Cliente da Simulação</div>
                       <div className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
-                        {selectedHistoryItem.client_name || 'Nao informado'}
+                        {formatHistoryClientName(selectedHistoryItem) || 'Nao informado'}
                       </div>
                     </div>
                     <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
@@ -1805,7 +2024,7 @@ const SimulationPage = ({ user }) => {
                           {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsCatalogAmount) : 'Nao informado'}
                         </div>
                         <div className="text-center text-xs text-muted-foreground">
-                          {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsCatalogPercent) : '-'}
+                          {selectedHistoryMetrics.hasTarget ? formatPercentFixed(selectedHistoryMetrics.targetVsCatalogPercent, 1) : '-'}
                         </div>
                       </div>
                       <div className="rounded-lg border border-white/50 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/5">
@@ -1814,7 +2033,7 @@ const SimulationPage = ({ user }) => {
                           {selectedHistoryMetrics.hasTarget ? formatCurrency(selectedHistoryMetrics.targetVsSimulatedAmount) : 'Nao informado'}
                         </div>
                         <div className="text-center text-xs text-muted-foreground">
-                          {selectedHistoryMetrics.hasTarget ? formatPercent(selectedHistoryMetrics.targetVsSimulatedPercent) : '-'}
+                          {selectedHistoryMetrics.hasTarget ? formatPercentFixed(selectedHistoryMetrics.targetVsSimulatedPercent, 1) : '-'}
                         </div>
                       </div>
                     </div>
