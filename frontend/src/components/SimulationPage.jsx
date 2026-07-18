@@ -75,6 +75,43 @@ const normalizeLookupValue = (value) =>
     .trim()
     .toLowerCase();
 
+const CLIENTS_PAGE_SIZE = 1000;
+
+const loadAllRows = async (tableName, selectClause, orderColumn) => {
+  let rows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + CLIENTS_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from(tableName)
+      .select(selectClause)
+      .order(orderColumn, { ascending: true })
+      .range(from, to);
+
+    if (error) throw error;
+
+    const batch = data || [];
+    rows = rows.concat(batch);
+
+    if (batch.length < CLIENTS_PAGE_SIZE) {
+      break;
+    }
+
+    from += CLIENTS_PAGE_SIZE;
+  }
+
+  return rows;
+};
+
+const loadAllClients = async () => {
+  return loadAllRows('clients', 'id, name', 'name');
+};
+
+const loadAllClientAliases = async () => {
+  return loadAllRows('client_aliases', 'id, client_id, alias_name, clients(name)', 'alias_name');
+};
+
 const DRE_APPROVED_MARGINS = [
   { category: 'Pó', margin: '20,32%' },
   { category: 'Gel', margin: '48,41%' },
@@ -185,6 +222,7 @@ const SimulationPage = ({ user }) => {
   const [history, setHistory] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [clients, setClients] = useState([]);
+  const [clientAliases, setClientAliases] = useState([]);
   const [minimumRules, setMinimumRules] = useState([]);
   const [loadingClients, setLoadingClients] = useState(false);
   const [importingMinimumRules, setImportingMinimumRules] = useState(false);
@@ -261,25 +299,25 @@ const SimulationPage = ({ user }) => {
   }, [loadMinimumRules]);
 
   useEffect(() => {
-    const loadClients = async () => {
+    const loadClientData = async () => {
       try {
         setLoadingClients(true);
-        const { data, error } = await supabase
-          .from('clients')
-          .select('id, name')
-          .order('name', { ascending: true });
-
-        if (error) throw error;
-        setClients(data || []);
+        const [clientsData, aliasesData] = await Promise.all([
+          loadAllClients(),
+          loadAllClientAliases(),
+        ]);
+        setClients(clientsData);
+        setClientAliases(aliasesData);
       } catch (error) {
         console.error('Error loading clients:', error);
         setClients([]);
+        setClientAliases([]);
       } finally {
         setLoadingClients(false);
       }
     };
 
-    loadClients();
+    loadClientData();
   }, []);
 
   // Generate options for the select
@@ -768,9 +806,8 @@ const SimulationPage = ({ user }) => {
 
     try {
       setLoading(true);
-      const baseClient = selectedBaseClient && selectedBaseClient.name === typedClientName
-        ? selectedBaseClient
-        : null;
+      const baseClient = findBaseClientByInput(typedClientName)
+        || (selectedBaseClient && selectedBaseClient.name === typedClientName ? selectedBaseClient : null);
       const normalizedClientName = baseClient?.name || typedClientName;
       const parsedPrice = Number(price) || 0;
       const parsedCost = Number(cost) || 0;
@@ -1058,31 +1095,101 @@ const SimulationPage = ({ user }) => {
     return Number(grossPrice) || 0;
   }, [grossPrice]);
 
-  const resolvedSaveClient = useMemo(() => {
+  const clientLookupData = useMemo(() => {
+    const clientsById = new Map((clients || []).map((client) => [client.id, client]));
+    const aliasesByNormalized = new Map();
+
+    (clientAliases || []).forEach((alias) => {
+      const normalizedAlias = normalizeLookupValue(alias.alias_name);
+      const baseClient = clientsById.get(alias.client_id) || {
+        id: alias.client_id,
+        name: alias.clients?.name || '',
+      };
+
+      if (!normalizedAlias || !baseClient?.id) return;
+      aliasesByNormalized.set(normalizedAlias, {
+        ...alias,
+        client: baseClient,
+      });
+    });
+
     return {
-      matchedClient: selectedBaseClient,
-      isBaseClient: Boolean(
-        selectedBaseClient && selectedBaseClient.name === saveForm.clientName.trim()
-      ),
-      displayName: selectedBaseClient?.name || saveForm.clientName.trim(),
+      clientsById,
+      aliasesByNormalized,
     };
-  }, [selectedBaseClient, saveForm.clientName]);
+  }, [clientAliases, clients]);
+
+  const findBaseClientByInput = useCallback((value) => {
+    const normalizedValue = normalizeLookupValue(value);
+    if (!normalizedValue) return null;
+
+    const exactClientMatch = (clients || []).find(
+      (client) => normalizeLookupValue(client.name) === normalizedValue
+    );
+    if (exactClientMatch) return exactClientMatch;
+
+    return clientLookupData.aliasesByNormalized.get(normalizedValue)?.client || null;
+  }, [clientLookupData.aliasesByNormalized, clients]);
+
+  const resolvedSaveClient = useMemo(() => {
+    const typedClientName = saveForm.clientName.trim();
+    const matchedClient = findBaseClientByInput(typedClientName)
+      || selectedBaseClient
+      || null;
+    const isBaseClient = Boolean(matchedClient);
+
+    return {
+      matchedClient,
+      isBaseClient,
+      displayName: matchedClient?.name || typedClientName,
+    };
+  }, [findBaseClientByInput, saveForm.clientName, selectedBaseClient]);
 
   const filteredClientSuggestions = useMemo(() => {
     const typedValue = normalizeLookupValue(saveForm.clientName);
-    const normalizedExactMatch = typedValue;
-
-    return (clients || [])
+    const baseSuggestions = (clients || [])
       .filter((client) => {
-        const clientName = String(client.name || '');
-        const normalizedClientName = normalizeLookupValue(clientName);
-
+        const normalizedClientName = normalizeLookupValue(client.name);
         if (!typedValue) return true;
         return normalizedClientName.includes(typedValue);
       })
-      .filter((client) => normalizeLookupValue(client.name) !== normalizedExactMatch)
-      .slice(0, 8);
-  }, [clients, saveForm.clientName]);
+      .map((client) => ({
+        key: `client-${client.id}`,
+        type: 'client',
+        client,
+        label: client.name,
+        description: null,
+      }));
+
+    if (!typedValue) {
+      return baseSuggestions;
+    }
+
+    const aliasSuggestions = (clientAliases || [])
+      .filter((alias) => {
+        const normalizedAlias = normalizeLookupValue(alias.alias_name);
+        return normalizedAlias.includes(typedValue);
+      })
+      .map((alias) => {
+        const baseClient = clientLookupData.clientsById.get(alias.client_id) || {
+          id: alias.client_id,
+          name: alias.clients?.name || '',
+        };
+
+        return {
+          key: `alias-${alias.id}`,
+          type: 'alias',
+          client: baseClient,
+          label: alias.alias_name,
+          description: baseClient.name || null,
+        };
+      })
+      .filter((suggestion) => {
+        return normalizeLookupValue(suggestion.label) !== normalizeLookupValue(suggestion.client.name);
+      });
+
+    return [...baseSuggestions, ...aliasSuggestions];
+  }, [clientAliases, clientLookupData.clientsById, clients, saveForm.clientName]);
 
   const usesTaxesCalculator = [
     SIMULATION_MODES.GROSS_CALCULATION,
@@ -1831,20 +1938,29 @@ const SimulationPage = ({ user }) => {
                   />
                   {showClientSuggestions && filteredClientSuggestions.length > 0 && (
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                      {filteredClientSuggestions.map((client) => (
+                      {filteredClientSuggestions.map((suggestion) => (
                         <button
-                          key={client.id}
+                          key={suggestion.key}
                           type="button"
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-900 hover:bg-[#845AFA]/10 dark:text-gray-100 dark:hover:bg-[#845AFA]/20"
+                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm text-gray-900 hover:bg-[#845AFA]/10 dark:text-gray-100 dark:hover:bg-[#845AFA]/20"
                           onMouseDown={(event) => {
                             event.preventDefault();
-                            setSelectedBaseClient(client);
-                            setSaveForm((prev) => ({ ...prev, clientName: client.name }));
+                            setSelectedBaseClient(suggestion.client);
+                            setSaveForm((prev) => ({ ...prev, clientName: suggestion.client.name }));
                             setShowClientSuggestions(false);
                           }}
                         >
-                          <span className="truncate">{client.name}</span>
-                          <span className="ml-3 text-[11px] text-[#6b46c1] dark:text-purple-300">Base</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate">{suggestion.label}</div>
+                            {suggestion.description && (
+                              <div className="truncate text-[11px] text-muted-foreground">
+                                Base: {suggestion.description}
+                              </div>
+                            )}
+                          </div>
+                          <span className="shrink-0 text-[11px] text-[#6b46c1] dark:text-purple-300">
+                            {suggestion.type === 'alias' ? 'Depara' : 'Base'}
+                          </span>
                         </button>
                       ))}
                     </div>
