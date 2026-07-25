@@ -788,6 +788,7 @@ const CatalogoPro = ({ user }) => {
                   </>
                 ) : (
                   <>
+                    <TableHead className="min-w-[120px]">ID</TableHead>
                     <TableHead className="min-w-[260px]">SKU</TableHead>
                     <TableHead>Volume</TableHead>
                     <TableHead>{selectedCatalogConfig.userPrimaryPriceLabel}</TableHead>
@@ -802,7 +803,7 @@ const CatalogoPro = ({ user }) => {
               {rows.length === 0 ? (
                 <TableRow className="border-gray-200 dark:border-gray-800">
                   <TableCell
-                    colSpan={isPricingUser ? 9 : 5}
+                    colSpan={isPricingUser ? 9 : 6}
                     className="h-24 text-center text-sm text-gray-500 dark:text-gray-400"
                   >
                     {emptyMessage}
@@ -837,6 +838,7 @@ const CatalogoPro = ({ user }) => {
                       </>
                     ) : (
                       <>
+                        <TableCell>{row?.[selectedCatalogConfig.idField] || '—'}</TableCell>
                         <TableCell>{row?.sku || '—'}</TableCell>
                         <TableCell>{formatVolume(row?.volume)}</TableCell>
                         <TableCell>
