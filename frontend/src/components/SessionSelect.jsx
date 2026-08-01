@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Briefcase, ClipboardList, Users, Calculator, Tags } from 'lucide-react';
+import { Briefcase, ClipboardList, Users, Calculator, Tags, BookOpen } from 'lucide-react';
 import Header from './Header';
 
 const SessionSelect = ({ user }) => {
@@ -10,7 +10,7 @@ const SessionSelect = ({ user }) => {
     { key: 'pre-vendas', title: 'New Projects', icon: ClipboardList, to: '/new-business' },
     { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
-    { key: 'catalogo-pro', title: 'Catálogo PRO', icon: Calculator, to: '/catalogo-pro' },
+    { key: 'catalogo-pro', title: 'Catálogo PRO', icon: BookOpen, to: '/catalogo-pro' },
     { key: 'combos-feiras', title: 'Combos 2026', icon: Tags, to: '/combos-feiras-2026' },
   ];
   

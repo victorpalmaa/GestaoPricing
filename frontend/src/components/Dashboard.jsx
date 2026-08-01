@@ -699,43 +699,40 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               <button
                 type="button"
                 onClick={() => setOriginFilter('novo_cliente')}
-                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                className="inline-flex items-center justify-center gap-2 px-3 h-11 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors transition-transform hover:scale-105 active:scale-95 text-white"
                 style={{ backgroundColor: 'var(--color-success)' }}
                 title="Filtrar: Novos clientes"
               >
-                <CheckCircle size={18} />
-                <span className="leading-tight text-center">Novos<br/>clientes</span>
+                <CheckCircle size={16} />
+                <span className="leading-none whitespace-nowrap">Novos clientes</span>
               </button>
               <button
                 type="button"
                 onClick={() => setOriginFilter('novo_sku')}
-                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                className="inline-flex items-center justify-center gap-2 px-3 h-11 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors transition-transform hover:scale-105 active:scale-95 text-white"
                 style={{ backgroundColor: 'var(--color-info)' }}
                 title="Filtrar: Novos SKUs dentro da base"
               >
-                <Package size={18} />
-                <div className="flex flex-col items-center leading-tight">
-                  <span>Novos SKUs</span>
-                  <span>na base</span>
-                </div>
+                <Package size={16} />
+                <span className="leading-none whitespace-nowrap">Novos SKUs na base</span>
               </button>
               <button
                 type="button"
                 onClick={() => setOriginFilter('')}
-                className="flex items-center justify-center gap-2 px-2 h-14 rounded-lg font-semibold text-sm transition-colors transition-transform hover:scale-105 active:scale-95 text-white w-[140px]"
+                className="inline-flex items-center justify-center gap-2 px-3 h-11 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors transition-transform hover:scale-105 active:scale-95 text-white min-w-[110px]"
                 style={{ backgroundColor: 'var(--color-primary)' }}
                 title="Mostrar todos"
               >
-                <BarChart3 size={18} />
-                Todos
+                <BarChart3 size={16} />
+                <span className="leading-none whitespace-nowrap">Todos</span>
               </button>
             </div>
             <div className="flex items-center justify-end">
               <button
                 onClick={() => setShowMoreMetrics(!showMoreMetrics)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+                className="inline-flex items-center gap-2 px-3 h-11 rounded-lg font-semibold text-xs whitespace-nowrap transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
               >
-                <Activity size={18} />
+                <Activity size={16} />
                 {showMoreMetrics ? 'Menos métricas' : 'Mais métricas'}
               </button>
             </div>
@@ -1084,37 +1081,37 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             </div>
           )}
           <div className="overflow-x-auto max-h-[70vh]">
-            <table className="w-full">
+            <table className="w-full text-[13px]">
               <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
                 <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-1/4">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 w-[18%]">
                     Cliente
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-[35%]">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 w-[40%]">
                     SKU
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-1/5">
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 w-[10%] whitespace-nowrap">
                     Precificação
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     Preço Líquido
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-bold text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                  <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 dark:text-gray-200 whitespace-nowrap">
                     Preço Bruto
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">
                     MB (%)
                   </th>
-                  <th className="px-6 py-4 text-right text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">
                     Volume
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">
                     Status
                   </th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-500 dark:text-gray-400 w-[180px]">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 w-[150px]">
                     Data
                   </th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-500 dark:text-gray-400 w-[180px]">
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 w-[160px]">
                     Edição
                   </th>
                 </tr>
@@ -1134,27 +1131,27 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                       key={lead.id}
                       className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
                     >
-                      <td className="px-6 py-4 text-gray-900 dark:text-gray-100 break-words w-1/4">
+                      <td className="px-4 py-3 text-[13px] text-gray-900 dark:text-gray-100 break-words w-[18%] leading-snug">
                         {lead.cliente}
                       </td>
-                      <td className="px-6 py-4 w-[35%]">
-                        <span className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 break-words inline-block">
+                      <td className="px-4 py-3 w-[40%]">
+                        <span className="px-2.5 py-1 rounded-lg text-[13px] font-medium leading-snug bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 break-words inline-block">
                           {lead.sku}
                         </span>
                       </td>
-                      <td className="px-6 py-4 w-1/5">
-                        <span className="px-3 py-1 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis block max-w-full">
+                      <td className="px-3 py-3 w-[10%] text-center">
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 whitespace-nowrap">
                           {lead.pricingId}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      <td className="px-4 py-3 text-right text-[13px] text-gray-500 dark:text-gray-400 whitespace-nowrap">
                         R$ {lead.precoLiquido.toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                      <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         R$ {lead.precoBruto.toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="px-3 py-1 rounded-lg text-sm font-semibold"
+                      <td className="px-4 py-3 text-right">
+                        <span className="px-2.5 py-1 rounded-lg text-xs font-semibold"
                               style={{ 
                                 backgroundColor: lead.margemBruta >= 35 
                                   ? 'rgba(100, 208, 32, 0.15)' 
@@ -1166,10 +1163,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                           {lead.margemBruta.toFixed(1)}%
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-right text-gray-500 dark:text-gray-400">
+                      <td className="px-4 py-3 text-right text-[13px] text-gray-500 dark:text-gray-400">
                         {lead.volume.toLocaleString('pt-BR')}
                       </td>
-                      <td className="px-6 py-4 text-left">
+                      <td className="px-4 py-3 text-left">
                         {(() => {
                           const s = lead.status || 'em_aberto';
                           const label = s === 'aprovado' ? 'Aprovado' : s === 'reprovado' ? 'Reprovado' : 'Em aberto';
