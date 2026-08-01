@@ -2,9 +2,13 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Briefcase, ClipboardList, Users, Calculator, Tags, BookOpen } from 'lucide-react';
 import Header from './Header';
+import { useAuth } from '@/contexts/AuthContext';
+import { hasAreaAccessToRoute, canAreaWriteToRoute } from '@/lib/permissions';
+import { ACCESS_PENDING_DESCRIPTION, ACCESS_PENDING_SUPPORT, ACCESS_PENDING_TITLE } from '@/lib/accessMessages';
 
 const SessionSelect = ({ user }) => {
   const navigate = useNavigate();
+  const { area } = useAuth();
   const cards = [
     { key: 'pricing-dashboard', title: 'Pricing', icon: Briefcase, to: '/pricing/dashboard' },
     { key: 'pre-vendas', title: 'New Projects', icon: ClipboardList, to: '/new-business' },
@@ -15,7 +19,9 @@ const SessionSelect = ({ user }) => {
   ];
   
   const subtitleFor = (key) => {
-    if (key === 'pricing-dashboard') return 'Histórico e Gestão';
+    if (key === 'pricing-dashboard') {
+      return canAreaWriteToRoute(area, '/pricing/dashboard') ? 'Histórico e Gestão' : 'Consulta';
+    }
     if (key === 'pre-vendas') return 'Prospecção e Pipeline';
     if (key === 'cs') return 'Controle e Reajuste';
     if (key === 'simulacao') return 'Cálculo e Análise';
@@ -23,6 +29,11 @@ const SessionSelect = ({ user }) => {
     if (key === 'combos-feiras') return 'Disponível em Breve';
     return 'Acesso ao Módulo';
   };
+
+  const hasPendingAccess = !area || !String(area).trim();
+  const visibleCards = hasPendingAccess
+    ? []
+    : cards.filter(({ to }) => hasAreaAccessToRoute(area, to));
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">
@@ -43,25 +54,41 @@ const SessionSelect = ({ user }) => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {cards.map(({ key, title, icon: Icon, to }) => (
-            <button
-              key={key}
-              onClick={() => navigate(to)}
-              className="w-full p-6 text-left bg-white dark:bg-[#0a0a0a] dark:border-gray-800 border border-transparent shadow-sm rounded-xl hover:shadow-md transition-all duration-200 hover:scale-[1.02] group"
-            >
-              <div className="flex items-center gap-4">
-                <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-900 text-blue-600 dark:text-blue-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors">
-                  <Icon size={28} />
+        {hasPendingAccess ? (
+          <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111111] p-10 shadow-sm">
+            <div className="mx-auto max-w-2xl text-center">
+              <h2 className="text-3xl font-semibold text-gray-900 dark:text-white">
+                {ACCESS_PENDING_TITLE}
+              </h2>
+              <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+                {ACCESS_PENDING_DESCRIPTION}
+              </p>
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                {ACCESS_PENDING_SUPPORT}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {visibleCards.map(({ key, title, icon: Icon, to }) => (
+              <button
+                key={key}
+                onClick={() => navigate(to)}
+                className="w-full p-6 text-left bg-white dark:bg-[#0a0a0a] dark:border-gray-800 border border-transparent shadow-sm rounded-xl hover:shadow-md transition-all duration-200 hover:scale-[1.02] group"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-900 text-blue-600 dark:text-blue-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors">
+                    <Icon size={28} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">{title}</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{subtitleFor(key)}</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">{title}</h2>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{subtitleFor(key)}</p>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

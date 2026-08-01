@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
-import { User, Mail, Lock, Building2, Eye, EyeOff } from 'lucide-react';
-
-const allowedAreas = [
-  { value: 'Pricing', label: 'Data' },
-  { value: 'Pré-vendas', label: 'New Business' },
-  { value: 'CS', label: 'Business Development' },
-];
+import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import {
+  ACCESS_PENDING_DESCRIPTION,
+  ACCESS_PENDING_SUBTITLE,
+  ACCESS_PENDING_SUPPORT,
+} from '@/lib/accessMessages';
 
 const Cadastro = ({ setUser }) => {
   const navigate = useNavigate();
@@ -16,12 +15,12 @@ const Cadastro = ({ setUser }) => {
   const [formData, setFormData] = useState({
     nome: '',
     sobrenome: '',
-    area: '',
     email: '',
     password: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [emailError, setEmailError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -37,6 +36,7 @@ const Cadastro = ({ setUser }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
 
     if (!validateEmail(formData.email)) {
       return;
@@ -55,8 +55,7 @@ const Cadastro = ({ setUser }) => {
         options: {
           data: {
             nome: formData.nome,
-            sobrenome: formData.sobrenome,
-            area: formData.area
+            sobrenome: formData.sobrenome
           }
         }
       });
@@ -64,14 +63,14 @@ const Cadastro = ({ setUser }) => {
         throw new Error(signUpError.message || 'Falha ao cadastrar');
       }
       if (signUpData?.session && signUpData?.user) {
-        setUser(signUpData.user);
+        await setUser(signUpData.user);
         localStorage.setItem('pronutrition_user', JSON.stringify(signUpData.user));
         localStorage.setItem('pronutrition_token', signUpData.session.access_token);
         navigate('/select');
         return;
       }
-      setUser(null);
-      setError('Cadastro criado. Verifique seu e-mail para confirmar.');
+      await setUser(null);
+      setSuccessMessage([ACCESS_PENDING_SUBTITLE, ACCESS_PENDING_DESCRIPTION, ACCESS_PENDING_SUPPORT].join(' '));
     } catch (err) {
       setError(err.message || 'Erro ao cadastrar');
     } finally {
@@ -166,34 +165,6 @@ const Cadastro = ({ setUser }) => {
               </div>
             </div>
 
-            {/* Área/Time */}
-            <div>
-              <label htmlFor="area" className="label-pronutrition">
-                Área/Time
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Building2 size={20} style={{ color: 'var(--color-text-muted)' }} />
-                </div>
-                <select
-                  id="area"
-                  name="area"
-                  required
-                  className="input-pronutrition pl-10"
-                  value={formData.area}
-                  onChange={handleChange}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <option value="">Selecione sua área</option>
-                  {allowedAreas.map((area) => (
-                    <option key={area.value} value={area.value}>
-                      {area.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
             {/* Email */}
             <div>
               <label htmlFor="email" className="label-pronutrition">
@@ -263,6 +234,17 @@ const Cadastro = ({ setUser }) => {
               }}>
                 <p className="text-sm" style={{ color: 'var(--color-danger)' }}>
                   {error}
+                </p>
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="p-3 rounded-lg" style={{
+                backgroundColor: '#DCFCE7',
+                border: '1px solid #16A34A'
+              }}>
+                <p className="text-sm" style={{ color: '#166534' }}>
+                  {successMessage}
                 </p>
               </div>
             )}

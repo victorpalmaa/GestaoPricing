@@ -1,67 +1,109 @@
-<img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&size=22&pause=900&center=true&vCenter=true&width=900&lines=Gest%C3%A3o+Pricing;Pre+Sales;Customer+Success" />
+# Gestão Pricing 2.0
 
-# Gestão Pricing
+Aplicação interna da Pronutrition para pricing, pré-vendas e customer success.
 
-Aplicação para gestão de preços e leads com sessões de Pre Sales, Pricing e CS. Após login, o usuário escolhe a sessão e navega com permissões específicas: `Pricing` edita tudo (admin), `Pre Sales` edita apenas New Leads, `CS` edita apenas a tela de CS.
+## Stack
 
-## Contexto e Objetivo
-- Centralizar visualização e edição de preços/leads, mantendo identidade visual.
-- Oferecer fluxo pós-login com seleção de sessão e botões de voltar.
-- Preparar backend para autenticação e persistência futura via Supabase.
+- React 18
+- Vite
+- Tailwind CSS
+- shadcn/ui + Radix UI
+- Supabase (Auth + Postgres consumidos direto pelo frontend)
 
-## Arquitetura
-- Frontend: React (CRA + CRACO), Tailwind, componentes UI.
-- Backend: FastAPI com JWT, CORS, dotenv, estrutura pronta para Supabase.
-- Comunicação: durante o MVP, o frontend usa mocks; backend expõe endpoints `HTTP` para futura integração.
+## Estrutura
 
-## Pré‑requisitos
-- `Node.js >= 18` (recomendado `20/22`).
-- `Python 3.10+` (recomendado `3.11/3.12`).
-- `pip` e `virtualenv`.
+- `frontend/`: aplicação web
+- `frontend/src/components/`: telas e componentes visuais
+- `frontend/src/components/ui/`: biblioteca base de UI
+- `frontend/src/contexts/`: contexto de autenticação
+- `frontend/src/lib/`: utilitários de configuração e permissões
+- `frontend/src/utils/`: regras auxiliares e cálculos
+- `supabase/migrations/`: histórico versionado do schema e permissões do banco
 
-## Instalação
-1) Frontend
-   - Entre em `frontend/`
-   - Instale dependências:
-     - `yarn` ou `npm install`
+## Desenvolvimento local
 
-2) Backend
-   - Entre em `backend/`
-   - Crie e ative o ambiente virtual:
-     - macOS/Linux: `python3 -m venv .venv && source .venv/bin/activate`
-     - Windows: `py -m venv .venv && .venv\\Scripts\\activate`
-   - Instale dependências: `pip install -r requirements.txt`
+Pré-requisitos:
 
-## Variáveis de Ambiente
-Crie o arquivo `.env` (veja `.env.example`) na pasta `backend/` com:
-- `SECRET_KEY`
-- `JWT_ALGORITHM`
-- `ACCESS_TOKEN_EXPIRE_MINUTES`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `CORS_ORIGINS`
+- Node.js 18+
+- Yarn 1.x
 
-Opcional no frontend: `REACT_APP_API_URL` (ex.: `http://localhost:8000/api`).
+Instalação:
 
-## Como Rodar
-1) Backend
-   - Em `backend/` com o venv ativo: `./.venv/bin/uvicorn server:app --host 0.0.0.0 --port 8000`
-   - Healthcheck: `GET http://localhost:8000/healthz`
+```bash
+cd frontend
+yarn install
+```
 
-2) Frontend
-   - Em `frontend/`: `yarn start` ou `npm start`
-   - Abre em `http://localhost:3000`
-   - Se precisar do fluxo antigo com CRA/CRACO: `npm run start:cra`
+Rodar em desenvolvimento:
 
-## Fluxo de Uso
-- Login → Seleção de Sessão (`/select`) → Página da sessão (`/pricing`, `/pre-vendas/new-leads`, `/cs`).
-- Botão “Voltar” leva à seleção de sessões e tem animação inspirada em “Mais métricas”.
-- Alertas de sucesso aparecem no canto inferior em operações de edição/exclusão.
+```bash
+yarn dev
+```
 
-## Scripts Úteis
-- Frontend: `yarn start`, `yarn build`, `yarn test`, `yarn start:cra`.
-- Backend: `uvicorn server:app --reload` para desenvolvimento.
+O app sobe em `http://localhost:5174`.
 
-## Notas
-- O projeto ignora `.env` e caches via `.gitignore` em raiz e `frontend/`.
-- Para usar Supabase, defina `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` no `.env` do backend.
+## Build e preview
+
+Build de produção:
+
+```bash
+cd frontend
+yarn build
+```
+
+Preview local do build:
+
+```bash
+cd frontend
+yarn preview
+```
+
+Saída de build: `frontend/dist/`
+
+## Testes
+
+Executar a suíte de testes:
+
+```bash
+cd frontend
+yarn test --run
+```
+
+Os testes numéricos de precificação ficam em `frontend/src/utils/simulationPricing.test.js`.
+
+## Variáveis de ambiente
+
+O projeto usa estas variáveis no frontend:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_REDIRECT_URL`
+
+## Áreas e permissões
+
+Áreas suportadas:
+
+- `Pricing`
+- `Pré-vendas`
+- `CS`
+
+A autorização real vive em `public.users.area` no Supabase e é aplicada por RLS no banco. O frontend usa guards e ajustes de interface apenas para experiência de uso.
+
+Resumo funcional:
+
+- `Pricing`: acesso administrativo e escrita completa onde permitido
+- `Pré-vendas`: acesso aos módulos liberados para operação comercial
+- `CS`: acesso aos módulos liberados para customer success
+
+Usuários recém-criados podem ficar com `area` nula até a liberação manual pela área de Pricing.
+
+## Deploy na Vercel
+
+Configuração esperada:
+
+- Framework Preset: `Vite`
+- Root Directory: `frontend`
+- Build Command: `yarn build`
+- Output Directory: `dist`
+
+O fallback de SPA está em `frontend/vercel.json`, para manter rotas do React Router funcionando por URL direta.

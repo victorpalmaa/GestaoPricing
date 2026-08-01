@@ -38,6 +38,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAuth } from '@/contexts/AuthContext';
+import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 import {
   Popover,
   PopoverContent,
@@ -95,6 +97,7 @@ import {
 } from 'recharts';
 
 const CS = ({ user }) => {
+  const { area, isPricing: isPricingUser } = useAuth();
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
@@ -715,7 +718,11 @@ const CS = ({ user }) => {
       toast.success(`Status atualizado para: ${newStatus}`);
     } catch (error) {
       console.error('Error updating status:', error);
-      toast.error('Erro ao atualizar status. As alterações foram revertidas.');
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode alterar o status deste reajuste.')
+          : 'Erro ao atualizar status. As alterações foram revertidas.'
+      );
       
       // Revert to previous status
       setContracts(currentContracts => 
@@ -726,8 +733,8 @@ const CS = ({ user }) => {
     }
   }, []);
 
-
-  const isPricingUser = user?.area === 'Pricing' || user?.user_metadata?.area === 'Pricing';
+  const canManageContractFields = isPricingUser || area === 'CS';
+  const canDeleteContracts = isPricingUser;
 
   const handleUpdateField = async (item, field, value) => {
     try {
@@ -773,12 +780,16 @@ const CS = ({ user }) => {
 
     } catch (error) {
       console.error('Erro detalhado ao atualizar:', error);
-      toast.error(`Erro ao atualizar dados: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode alterar este campo neste registro.')
+          : `Erro ao atualizar dados: ${error.message || 'Erro desconhecido'}`
+      );
     }
   };
 
   const handleDeleteContract = async (item) => {
-    if (!item || !item.id) return;
+    if (!canDeleteContracts || !item || !item.id) return;
 
     try {
       const { error } = await supabase
@@ -797,7 +808,11 @@ const CS = ({ user }) => {
 
     } catch (error) {
       console.error('Erro ao excluir:', error);
-      toast.error(`Erro ao excluir: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode excluir este registro.')
+          : `Erro ao excluir: ${error.message || 'Erro desconhecido'}`
+      );
     }
   };
 
@@ -883,7 +898,11 @@ const CS = ({ user }) => {
       setIsEditModalOpen(false);
     } catch (error) {
       console.error('Erro ao salvar observação:', error);
-      toast.error('Erro ao salvar observação');
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode editar a observação deste registro.')
+          : 'Erro ao salvar observação'
+      );
     }
   };
 
@@ -955,7 +974,11 @@ const CS = ({ user }) => {
       setDateEditModal({ open: false, item: null, field: null, value: '' });
     } catch (error) {
       console.error('Erro ao atualizar data:', error);
-      toast.error('Erro ao atualizar data.');
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode alterar as datas deste registro.')
+          : 'Erro ao atualizar data.'
+      );
     } finally {
       setSavingDateEdit(false);
     }
@@ -1964,7 +1987,7 @@ const CS = ({ user }) => {
                         {item.client_name}
                       </td>
                       <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
-                        {isPricingUser ? (
+                        {canManageContractFields ? (
                           <Select
                             value={item.manager || ''}
                             onValueChange={(value) => handleUpdateField(item, 'manager', value)}
@@ -1991,7 +2014,7 @@ const CS = ({ user }) => {
                         {item.sku}
                       </td>
                       <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        {isPricingUser ? (
+                        {canManageContractFields ? (
                           <Select
                             value={item.gate ? item.gate.toString() : '1'}
                             onValueChange={(value) => handleUpdateField(item, 'gate', parseInt(value))}
@@ -2065,13 +2088,24 @@ const CS = ({ user }) => {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={(e) => handleDeleteClick(e, item)}
-                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                          title="Excluir preço"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={(e) => handleEditClick(e, item)}
+                            className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                            title="Editar observação"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          {canDeleteContracts && (
+                            <button
+                              onClick={(e) => handleDeleteClick(e, item)}
+                              className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                              title="Excluir preço"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))

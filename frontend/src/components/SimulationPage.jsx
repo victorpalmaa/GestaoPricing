@@ -26,6 +26,8 @@ import { Calculator, RefreshCcw, TrendingUp, DollarSign, Percent, History, Info,
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useAuth } from '@/contexts/AuthContext';
+import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 import {
   Popover,
   PopoverContent,
@@ -194,6 +196,7 @@ const evaluateMinimumPolicy = ({ rule, grossPrice, margin }) => {
 };
 
 const SimulationPage = ({ user }) => {
+  const { isPricing, user: authUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [loading, setLoading] = useState(false);
@@ -247,8 +250,14 @@ const SimulationPage = ({ user }) => {
   const [showHistoryObservations, setShowHistoryObservations] = useState(false);
   const minimumRulesImportInputRef = useRef(null);
   
-  const userArea = user?.area || user?.user_metadata?.area;
-  const isPricingUser = userArea === 'Pricing';
+  const isPricingUser = isPricing;
+  const canDeleteHistoryItem = useCallback((item) => {
+    if (!item?.id || !authUser?.id) {
+      return false;
+    }
+
+    return isPricingUser || item.user_id === authUser.id;
+  }, [authUser?.id, isPricingUser]);
 
   // Fetch catalog/products from DB
   useEffect(() => {
@@ -632,7 +641,11 @@ const SimulationPage = ({ user }) => {
       );
     } catch (error) {
       console.error('Erro ao importar minimos:', error);
-      toast.error(`Erro ao importar minimos: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode importar regras mínimas.')
+          : `Erro ao importar minimos: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setImportingMinimumRules(false);
     }
@@ -868,7 +881,11 @@ const SimulationPage = ({ user }) => {
       
     } catch (error) {
       console.error('Error saving simulation:', error);
-      toast.error(`Erro ao salvar simulação: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode salvar esta simulação.')
+          : `Erro ao salvar simulação: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setLoading(false);
     }
@@ -915,7 +932,9 @@ const SimulationPage = ({ user }) => {
   };
 
   const handleDeleteSimulation = async (simulationId) => {
-    if (!simulationId || !isPricingUser) return;
+    const targetItem = history.find((item) => item.id === simulationId);
+
+    if (!simulationId || !canDeleteHistoryItem(targetItem)) return;
     try {
       setDeleteLoading(true);
       const { data, error } = await supabase
@@ -935,7 +954,11 @@ const SimulationPage = ({ user }) => {
       setDeleteConfirmItem(null);
       toast.success('Simulação excluída com sucesso.');
     } catch (error) {
-      toast.error(`Erro ao excluir simulação: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode excluir esta simulação.')
+          : `Erro ao excluir simulação: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setDeleteLoading(false);
     }
@@ -1015,7 +1038,11 @@ const SimulationPage = ({ user }) => {
       triggerDecisionEffect(status);
       closeHistoryDetailModal();
     } catch (error) {
-      toast.error(`Erro ao atualizar status: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode revisar esta simulação.')
+          : `Erro ao atualizar status: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setReviewLoading(false);
     }
@@ -1769,13 +1796,13 @@ const SimulationPage = ({ user }) => {
                       <TableHead className="text-left">Preço Bruto</TableHead>
                       <TableHead className="text-left">Status</TableHead>
                       <TableHead className="text-left">Usuário / Data</TableHead>
-                      {isPricingUser && <TableHead className="text-left">Ações</TableHead>}
+                      <TableHead className="text-left">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {history.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={isPricingUser ? 10 : 9} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                           Nenhuma simulação registrada
                         </TableCell>
                       </TableRow>
@@ -1827,8 +1854,8 @@ const SimulationPage = ({ user }) => {
                               </span>
                            </div>
                         </TableCell>
-                          {isPricingUser && (
-                            <TableCell className="align-top">
+                          <TableCell className="align-top">
+                            {canDeleteHistoryItem(item) ? (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1840,8 +1867,8 @@ const SimulationPage = ({ user }) => {
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
-                            </TableCell>
-                          )}
+                            ) : null}
+                          </TableCell>
                         </TableRow>
                       ))
                     )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase, cn } from '@/lib/utils';
+import { supabase } from '@/lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
@@ -31,8 +31,10 @@ import {
 } from "@/components/ui/popover"
 import SearchableSelect from './SearchableSelect';
 import { calculateGate, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
+import { useRoutePermissions } from '@/lib/permissions';
 
 const PricingDashboard = ({ user }) => {
+  const { canWrite } = useRoutePermissions('/pricing/dashboard');
   const navigate = useNavigate();
   const [pricingData, setPricingData] = useState([]);
   const [clients, setClients] = useState([]);
@@ -109,9 +111,8 @@ const PricingDashboard = ({ user }) => {
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
 
-  const userArea = user?.area || user?.user_metadata?.area;
-  const isSuper = userArea === 'Pricing';
-  const canEdit = isSuper || userArea === 'Pricing';
+  const isSuper = canWrite;
+  const canEdit = canWrite;
 
   const parsePricingDate = (value) => {
     if (!value) return null;
@@ -1128,15 +1129,15 @@ const PricingDashboard = ({ user }) => {
           
           {/* Botões à direita: Exportar e Gerenciar Depara */}
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportExcel}
+              className="flex items-center justify-center px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title="Exportar"
+            >
+              <Download size={18} />
+            </button>
             {canEdit && (
               <>
-                <button
-                  onClick={handleExportExcel}
-                  className="flex items-center justify-center px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-                  title="Exportar"
-                >
-                  <Download size={18} />
-                </button>
                 <button
                   onClick={() => setShowAliasManager(true)}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors hover:shadow-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
@@ -1438,18 +1439,23 @@ const PricingDashboard = ({ user }) => {
                           {(Number(item.margin_budget) || 0).toFixed(1)}%
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <button
-                            onClick={() => handleToggleVigency(item)}
-                            disabled={!canEdit}
-                            className={cn('inline-flex rounded-md transition-opacity', !canEdit && 'opacity-70 cursor-not-allowed')}
-                            title={canEdit ? 'Clique para alternar vigência' : 'Sem permissão para alterar vigência'}
-                          >
-                            {item.isCurrent ? (
-                              <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
-                            )}
-                          </button>
+                          {canEdit ? (
+                            <button
+                              onClick={() => handleToggleVigency(item)}
+                              className="inline-flex rounded-md transition-opacity"
+                              title="Clique para alternar vigência"
+                            >
+                              {item.isCurrent ? (
+                                <Badge className="bg-green-100 text-green-800 hover:bg-green-200 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
+                              ) : (
+                                <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
+                              )}
+                            </button>
+                          ) : item.isCurrent ? (
+                            <Badge className="bg-green-100 text-green-800 border-none dark:bg-green-900/30 dark:text-green-400">Atual</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-gray-500 dark:text-gray-400 dark:bg-gray-800">Histórico</Badge>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.month || '-'}

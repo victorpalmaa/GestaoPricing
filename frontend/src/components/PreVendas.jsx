@@ -1,22 +1,10 @@
 import React from 'react';
 import Dashboard from './Dashboard';
+import { useRoutePermissions } from '@/lib/permissions';
 
 const PreVendas = ({ user, setUser }) => {
-  const rawArea = user?.area || user?.user_metadata?.area;
-  const normalizedArea = String(rawArea || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s_-]+/g, '');
+  const { canWrite: canManageNewBusiness } = useRoutePermissions('/new-business');
 
-  const canManageNewBusiness = normalizedArea === 'pricing'
-    || normalizedArea === 'prevendas'
-    || normalizedArea === 'presales'
-    || normalizedArea === 'cs'
-    || normalizedArea === 'clientsuccess'
-    || normalizedArea === 'businessdev'
-    || normalizedArea === 'businessdevelopment';
   return (
     <Dashboard 
       user={user} 

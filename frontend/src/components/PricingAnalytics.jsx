@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase, cn } from '@/lib/utils';
+import { supabase } from '@/lib/utils';
 import { ArrowLeft, TrendingUp, DollarSign, Users, Package, BarChart3, Calendar, Filter, Search, Check, ChevronsUpDown, X, Scale } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
@@ -41,11 +41,6 @@ const PricingAnalytics = ({ user, setUser }) => {
   // No longer needed
   // const [searchTerm, setSearchTerm] = useState('');
   // const [activeSearch, setActiveSearch] = useState('');
-
-  const userArea = user?.area || user?.user_metadata?.area;
-  const isSuper = userArea === 'Pricing';
-  const canEdit = isSuper || userArea === 'Pricing';
-
   const [searchParams] = useSearchParams();
 
   useEffect(() => {

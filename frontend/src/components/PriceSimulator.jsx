@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Lock, Calculator, ArrowRight, RefreshCcw, TrendingUp, DollarSign, Percent } from 'lucide-react';
 import { cn } from "@/lib/utils";
+import { useAuth } from '@/contexts/AuthContext';
 
 const PriceSimulator = ({ 
   user, 
@@ -19,8 +20,7 @@ const PriceSimulator = ({
   isOpen = false,
   onClose
 }) => {
-  const userArea = user?.area || user?.user_metadata?.area;
-  const isPricingUser = userArea === 'Pricing';
+  const { isPricing: isPricingUser } = useAuth();
 
   const [cost, setCost] = useState(initialCost || 0);
   const [price, setPrice] = useState(initialPrice || 0);

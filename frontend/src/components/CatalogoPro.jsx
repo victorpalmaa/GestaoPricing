@@ -45,6 +45,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { useAuth } from '@/contexts/AuthContext';
+import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
 const DEFAULT_CATEGORIES = ['Pó', 'Gel', 'Goma', 'Softgel'];
@@ -263,7 +265,7 @@ const getDaysUntilExpiry = () => {
 };
 
 const CatalogoPro = ({ user }) => {
-  const [authUser, setAuthUser] = useState(user || null);
+  const { isPricing: isPricingUser, user: authUser } = useAuth();
   const [selectedCatalog, setSelectedCatalog] = useState('');
   const [catalogRows, setCatalogRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -290,8 +292,6 @@ const CatalogoPro = ({ user }) => {
   const [deleteRow, setDeleteRow] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const userArea = authUser?.area || authUser?.user_metadata?.area || user?.area || user?.user_metadata?.area;
-  const isPricingUser = userArea === 'Pricing';
   const selectedCatalogConfig = selectedCatalog ? CATALOG_CONFIG[selectedCatalog] : null;
 
   const validityAlert = useMemo(() => {
@@ -349,22 +349,6 @@ const CatalogoPro = ({ user }) => {
       setLoading(false);
     }
   }, [selectedCatalog]);
-
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) throw error;
-        if (data?.user) {
-          setAuthUser(data.user);
-        }
-      } catch (error) {
-        console.error('Erro ao carregar usuário autenticado:', error);
-      }
-    };
-
-    loadUser();
-  }, []);
 
   useEffect(() => {
     setFullModeFilters({ sku: [], category: '', volume: '' });
@@ -677,7 +661,11 @@ const CatalogoPro = ({ user }) => {
       }
     } catch (error) {
       console.error('Erro ao importar catálogo:', error);
-      toast.error(`Erro ao importar catálogo: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode importar itens deste catálogo.')
+          : `Erro ao importar catálogo: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setImporting(false);
     }
@@ -733,7 +721,11 @@ const CatalogoPro = ({ user }) => {
       await loadCatalog(selectedCatalog);
     } catch (error) {
       console.error('Erro ao atualizar catálogo:', error);
-      toast.error(`Erro ao atualizar registro: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode editar itens deste catálogo.')
+          : `Erro ao atualizar registro: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setEditSaving(false);
     }
@@ -760,7 +752,11 @@ const CatalogoPro = ({ user }) => {
       await loadCatalog(selectedCatalog);
     } catch (error) {
       console.error('Erro ao excluir catálogo:', error);
-      toast.error(`Erro ao excluir registro: ${error.message || 'Erro desconhecido'}`);
+      toast.error(
+        isPermissionError(error)
+          ? getPermissionErrorMessage('Sua área não pode excluir itens deste catálogo.')
+          : `Erro ao excluir registro: ${error.message || 'Erro desconhecido'}`
+      );
     } finally {
       setDeleteLoading(false);
     }
