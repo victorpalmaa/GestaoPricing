@@ -137,19 +137,13 @@ Histórico de simulações realizadas/importadas.
   - Select: permissiva para autenticados (na migração inicial), com filtragens/limitações feitas na UI.
   - Delete: permitido ao dono ou à área `Pricing` (migração específica).
 
-#### `simulation_catalog_prices` (Catálogo base do Simulator / Catálogo PRO)
-Tabela com preços/custos “de catálogo” por código Datasul e volume.
-- Campos: `datasul_code`, `sku`, `volume (1000/3000/5000)`, `catalog_cost`, `catalog_price`, `catalog_gross_price`, `catalog_margin`, `created_at`, `updated_at`
-- Constraints:
-  - `unique(datasul_code, volume)` garante uma linha por volume para cada código.
-  - `check(volume in (1000, 3000, 5000))`
-- Trigger:
-  - `updated_at` atualizado automaticamente em `update`.
-- RLS:
-  - SELECT/INSERT/UPDATE para usuários autenticados.
+#### `simulation_catalog_prices` (legado)
+Tabela antiga de catálogo mantida apenas como referência histórica em migrações anteriores.
+- Não faz parte do estado atual do frontend.
+- O estado atual consome `catalog_br_prices` no Simulador e `catalog_br_prices` / `catalog_latam_prices` no Catálogo PRO.
 
 #### `users` (tabela pública espelho)
-A UI do Simulator faz lookup em uma tabela `public.users` para resolver o nome do usuário pelo `id`/`email`. Essa tabela não aparece como criação nas migrações principais, mas existe em scripts auxiliares (`frontend/scripts/update_schema_v6_safe_no_data_loss.sql`) com:
+A UI do Simulator faz lookup em uma tabela `public.users` para resolver o nome do usuário pelo `id`/`email`. A definição histórica dessa estrutura também aparece nos scripts legados preservados em `supabase/migrations/legacy/update_schema_v6_safe_no_data_loss.sql`, com:
 - `id` (FK para `auth.users`), `nome`, `sobrenome`, `email`, `area`, timestamps
 - Trigger/Function para sincronizar a partir de `auth.users`
 - RLS permitindo leitura do próprio registro ou pela área `Pricing`
@@ -246,10 +240,10 @@ com base em um **catálogo de referência** por “código Datasul” e volume.
 
 ### 8.2. Catálogo base (origem dos dados)
 Consulta principal:
-- `simulation_catalog_prices` com ordenação por `sku` e `volume`.
+- `catalog_br_prices` com ordenação por `sku` e `volume`.
 
-Fallback:
-- Caso a consulta falhe ou não exista dado no banco, a UI usa um `MOCK_CATALOG_PRODUCTS` (dados mockados) para permitir a tela funcionar.
+Comportamento esperado:
+- Caso a consulta falhe, a tela deve exibir erro explícito e bloquear a simulação até novo carregamento bem-sucedido.
 
 Chaves de seleção na UI:
 - `datasul_code` (chamado de “produto” no select)
@@ -331,26 +325,27 @@ Importação via Excel:
 ## 9. Tela Catálogo PRO (`/catalogo-pro`) — detalhamento com ênfase
 
 ### 9.1. Estado atual
-Atualmente a tela `Catálogo PRO` está marcada como **“Em desenvolvimento”** (placeholder).
+Atualmente a tela `Catálogo PRO` está ativa e consome catálogos separados para Brasil e Latam.
 
 ### 9.2. Conexão esperada com o banco (base já criada)
-Mesmo com a tela em desenvolvimento, o banco já possui a base de catálogo em:
-- `simulation_catalog_prices`
+O estado atual do frontend utiliza:
+- `catalog_br_prices`
+- `catalog_latam_prices`
 
-Esta tabela já contém o conjunto mínimo para um Catálogo PRO:
+Essas tabelas contêm o conjunto mínimo para o Catálogo PRO:
 - identificação do produto (`datasul_code`, `sku`)
 - dimensões comerciais (`volume`)
-- referências econômicas (`catalog_cost`, `catalog_price`, `catalog_gross_price`, `catalog_margin`)
+- referências econômicas (`catalog_cost`, `catalog_price`, `catalog_gross_price`, `catalog_margin`, `price_brl`, `price_usd`)
 
 ### 9.3. Como isso se conecta ao Simulator
-A tela do Simulador já consome `simulation_catalog_prices`. Ou seja:
-- O Catálogo PRO tende a ser a “tela de manutenção”/curadoria desse catálogo.
-- O Simulator tende a ser a “tela de consumo”/uso operacional do catálogo.
+A tela do Simulador consome `catalog_br_prices`. Ou seja:
+- O Catálogo PRO é a tela de manutenção/curadoria dos catálogos.
+- O Simulator é a tela de consumo operacional do catálogo Brasil.
 
 ### 9.4. Proposta de funcionalidades para o Catálogo PRO (alinhadas ao schema atual)
 Com o schema atual, o Catálogo PRO pode evoluir para:
 - Listagem e filtros por `datasul_code`, `sku` e `volume`
-- CRUD (inserir/editar) respeitando `unique(datasul_code, volume)`
+- CRUD (inserir/editar) respeitando unicidade por `sku` e `volume`
 - Importação de planilha para atualizar catálogo em lote
 - Auditoria (usar `created_at/updated_at`) e logs (opcional via `notifications`)
 
@@ -373,10 +368,11 @@ Acesso:
 ## 11. Migrações e evolução do schema
 
 Fonte principal:
-- `supabase/migrations/` contém migrações de criação/alteração de tabelas (ex.: pricing, simulações, catálogo).
+- `supabase/migrations/` contém o histórico versionado do schema atual, permissões e RLS.
+
+Legado preservado:
+- `supabase/migrations/legacy/` contém os scripts manuais históricos `update_schema_v2.sql` até `update_schema_v6_safe_no_data_loss.sql`.
+- Esses arquivos foram aplicados de forma inconsistente entre ambientes e hoje servem apenas como referência histórica. Não devem ser executados como parte do fluxo atual.
 
 Scripts auxiliares:
-- `frontend/scripts/` contém scripts de setup/inspeção e migrações “manuais” usadas em alguns ambientes (ex.: criação de `public.users` e rotinas de sync com `auth.users`).
-
-Recomendação operacional:
-- Consolidar o máximo possível do schema em `supabase/migrations/` para manter ambientes consistentes.
+- `frontend/scripts/` contém apenas scripts operacionais e de inspeção locais, sem fazer parte da cadeia oficial de migrações.

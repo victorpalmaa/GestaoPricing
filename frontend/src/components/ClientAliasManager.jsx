@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/utils';
 import { Plus, Trash2, Edit3 } from 'lucide-react';
-import { addNotification } from '@/utils/notifications';
 
 const ClientAliasManager = ({ user, refreshAliases }) => {
   const [clients, setClients] = useState([]);
@@ -61,7 +60,6 @@ const ClientAliasManager = ({ user, refreshAliases }) => {
 
       if (error) throw error;
 
-      addNotification('alias', `Novo depara adicionado: ${newAlias.trim()}`, user?.id);
       setNewAlias('');
       loadData(); // Recarregar dados
       if (refreshAliases) refreshAliases();
@@ -83,7 +81,6 @@ const ClientAliasManager = ({ user, refreshAliases }) => {
 
       if (error) throw error;
 
-      addNotification('alias', 'Depara excluído', user?.id);
       loadData(); // Recarregar dados
       if (refreshAliases) refreshAliases();
 
@@ -109,7 +106,6 @@ const ClientAliasManager = ({ user, refreshAliases }) => {
 
       if (error) throw error;
 
-      addNotification('alias', `Depara atualizado: ${editAliasValue.trim()}`, user?.id);
       setEditingAlias(null);
       setEditAliasValue('');
       loadData(); // Recarregar dados

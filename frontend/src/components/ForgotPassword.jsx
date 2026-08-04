@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
+import { supabase } from '@/lib/utils';
 import { Mail } from 'lucide-react';
 
 const ForgotPassword = () => {
@@ -17,12 +17,6 @@ const ForgotPassword = () => {
     setMessage('');
     setLoading(true);
     try {
-      const SUPABASE_URL = getSupabaseUrl();
-      const SUPABASE_ANON_KEY = getSupabaseAnonKey();
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !supabase) {
-        setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
-        return;
-      }
       const redirect = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_REDIRECT_URL)
         || `${window.location.origin}/update-password`;
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirect });

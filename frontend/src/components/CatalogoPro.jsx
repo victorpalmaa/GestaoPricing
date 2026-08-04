@@ -46,6 +46,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
+import { logExport } from '@/utils/activityLog';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
@@ -469,6 +470,10 @@ const CatalogoPro = ({ user }) => {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, selectedCatalogConfig.sheetName);
       XLSX.writeFile(workbook, selectedCatalogConfig.exportFileName);
+        await logExport(selectedCatalogConfig.tableName, exportRows.length, {
+          format: 'xlsx',
+          file_name: selectedCatalogConfig.exportFileName,
+        });
       toast.success(`Exportação do ${selectedCatalogConfig.title} concluída com sucesso!`);
     } catch (error) {
       console.error('Erro ao exportar catálogo:', error);

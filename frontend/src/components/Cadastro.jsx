@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase, getSupabaseUrl, getSupabaseAnonKey } from '@/lib/utils';
+import { supabase } from '@/lib/utils';
 import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import {
   ACCESS_PENDING_DESCRIPTION,
@@ -10,8 +10,6 @@ import {
 
 const Cadastro = ({ setUser }) => {
   const navigate = useNavigate();
-  const SUPABASE_URL = getSupabaseUrl();
-  const SUPABASE_ANON_KEY = getSupabaseAnonKey();
   const [formData, setFormData] = useState({
     nome: '',
     sobrenome: '',
@@ -45,10 +43,6 @@ const Cadastro = ({ setUser }) => {
     setLoading(true);
 
     try {
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !supabase) {
-        setError('Configuração ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY');
-        return;
-      }
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,

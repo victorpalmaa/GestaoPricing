@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import ClientAliasManager from './ClientAliasManager';
 import Header from './Header';
 import { toast } from 'sonner';
-import { addNotification } from '@/utils/notifications';
+import { logExport } from '@/utils/activityLog';
 import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
@@ -483,7 +483,7 @@ const PricingDashboard = ({ user }) => {
     return matchesClient && matchesSku && matchesCategory && matchesSubcategory && matchesSize && matchesDatasul && matchesDateFrom && matchesDateTo;
   });
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     try {
       const dataToExport = filteredData.map(item => ({
         'Cliente': item.clients?.name || '',
@@ -504,6 +504,10 @@ const PricingDashboard = ({ user }) => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Pricing Data");
       XLSX.writeFile(wb, "pricing_data.xlsx");
+      await logExport('pricing_history', dataToExport.length, {
+        format: 'xlsx',
+        file_name: 'pricing_data.xlsx',
+      });
       toast.success('Exportação concluída com sucesso!');
     } catch (error) {
       console.error('Erro ao exportar:', error);
@@ -785,10 +789,8 @@ const PricingDashboard = ({ user }) => {
 
           if (errorCount > 0) {
              toast.success(`Importação parcial: ${successCount} registros importados, ${errorCount} ignorados.`);
-             addNotification('import', `Importação parcial de preços: ${successCount} registros importados, ${errorCount} ignorados`, user?.id);
           } else {
              toast.success(`Importação realizada com sucesso! ${successCount} registros importados.`);
-             addNotification('import', `Importação de preços finalizada: ${successCount} registros importados`, user?.id);
           }
           
           setShowImportModal(false);
@@ -896,7 +898,6 @@ const PricingDashboard = ({ user }) => {
       }
 
       toast.success(editingId ? 'Preço atualizado com sucesso!' : 'Preço cadastrado com sucesso!');
-      addNotification('pricing', editingId ? `Preço atualizado para SKU ${priceData.sku}` : `Novo preço cadastrado para SKU ${priceData.sku}`, user?.id);
       setShowNewPriceModal(false);
       setEditingId(null);
       setNewPriceForm({
@@ -964,7 +965,6 @@ const PricingDashboard = ({ user }) => {
       if (error) throw error;
 
       toast.success('Registro excluído com sucesso!');
-      addNotification('pricing', `Preço excluído para SKU ${itemToDelete.sku}`, user?.id);
       loadData();
       setShowDeleteModal(false);
       setItemToDelete(null);

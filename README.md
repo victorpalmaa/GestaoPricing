@@ -19,6 +19,7 @@ Aplicação interna da Pronutrition para pricing, pré-vendas e customer success
 - `frontend/src/lib/`: utilitários de configuração e permissões
 - `frontend/src/utils/`: regras auxiliares e cálculos
 - `supabase/migrations/`: histórico versionado do schema e permissões do banco
+- `supabase/migrations/legacy/`: scripts SQL históricos preservados apenas como referência; não fazem parte do fluxo atual
 
 ## Desenvolvimento local
 
@@ -75,9 +76,9 @@ Os testes numéricos de precificação ficam em `frontend/src/utils/simulationPr
 
 O projeto usa estas variáveis no frontend:
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-- `VITE_SUPABASE_REDIRECT_URL`
+- `VITE_SUPABASE_URL`: URL do projeto Supabase usada pelo cliente web
+- `VITE_SUPABASE_ANON_KEY`: chave pública anônima usada para autenticação e acesso ao banco via Supabase
+- `VITE_SUPABASE_REDIRECT_URL`: URL de retorno usada no fluxo de redefinição de senha
 
 ## Áreas e permissões
 

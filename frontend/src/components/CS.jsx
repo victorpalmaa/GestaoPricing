@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from '@/contexts/AuthContext';
+import { logExport } from '@/utils/activityLog';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 import {
   Popover,
@@ -816,7 +817,7 @@ const CS = ({ user }) => {
     }
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     const headers = [
       'SKU', 'Cliente', 'Gestor', 'Categoria', 'Subcategoria', 
       'Preço Atual', 'Data Último Preço', 'Gate', 'Data Contrato', 'Prox. Vigência', 
@@ -854,6 +855,10 @@ const CS = ({ user }) => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+        await logExport('pricing_history', rows.length, {
+          format: 'csv',
+          file_name: `cs_action_list_${format(new Date(), 'yyyy-MM-dd')}.csv`,
+        });
     }
   };
 

@@ -4,7 +4,6 @@ import SearchableSelect from './SearchableSelect';
 import Header from './Header';
 import { differenceInDays, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { addNotification } from '@/utils/notifications';
 
 import { 
   Plus, 
@@ -31,6 +30,7 @@ import {
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
 import { toast } from 'sonner';
+import { logExport } from '@/utils/activityLog';
 
 const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true, canDelete: true }, title = 'Leads' }) => {
   const navigate = useNavigate();
@@ -373,7 +373,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             originTag: r.origin_tag || ''
           };
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
-          addNotification('update', `Lead atualizado: ${updated.cliente} - ${updated.sku}`, user?.id);
           toast.success('Lead atualizado');
         }
       })();
@@ -418,7 +417,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             originTag: r.origin_tag || ''
           };
           setLeads([newLead, ...leads]);
-          addNotification('create', `Novo lead adicionado: ${newLead.cliente} - ${newLead.sku}`, user?.id);
           setShowMoney(true);
           setTimeout(() => setShowMoney(false), 3000);
           toast.success('Lead adicionado');
@@ -485,7 +483,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         createdAt: r.createdat,
       };
       setLeads(leads.map(l => l.id === leadToReject.id ? updated : l));
-      addNotification('update', `Lead reprovado: ${updated.cliente} - ${updated.sku}`, user?.id);
       triggerDecisionEffect('rejected');
       toast.success('Lead reprovado');
       
@@ -550,7 +547,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           toast.error('Falha ao excluir');
         } else {
           setLeads(leads.filter(l => l.id !== leadToDelete));
-          addNotification('delete', 'Lead excluído', user?.id);
           setLeadToDelete(null);
           toast.success('Lead excluído');
         }
@@ -567,7 +563,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     }));
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const dataToExport = filteredLeads.map(l => ({
       'Cliente': l.cliente,
       'SKU': l.sku,
@@ -584,6 +580,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Pre Vendas");
     XLSX.writeFile(wb, "pre-vendas.xlsx");
+    await logExport('prices', dataToExport.length, {
+      format: 'xlsx',
+      file_name: 'pre-vendas.xlsx',
+    });
   };
 
   const metricsByOrigin = useMemo(() => {
@@ -1284,7 +1284,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                                             if (opt.key === 'aprovado') {
                                               triggerDecisionEffect('approved');
                                             }
-                                            addNotification('update', `Status alterado: ${updated.cliente} - ${updated.status}`, user?.id);
                                             setStatusMenuOpen(null);
                                             toast.success('Status atualizado');
                                           }

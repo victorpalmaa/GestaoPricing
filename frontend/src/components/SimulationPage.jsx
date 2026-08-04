@@ -43,18 +43,6 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 
-// MOCK DATA for Simulation
-const MOCK_CATALOG_PRODUCTS = [
-  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 1000, catalog_cost: 21.3, catalog_price: 29.9, catalog_gross_price: 33.22, catalog_margin: 28.76 },
-  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 1500, catalog_cost: 21.0, catalog_price: 29.4, catalog_gross_price: 32.67, catalog_margin: 28.57 },
-  { datasul_code: '900001', sku: 'LAVITAN COLAGENO VERISOL+AC.H PO PT300G', volume: 3000, catalog_cost: 20.8, catalog_price: 28.9, catalog_gross_price: 32.11, catalog_margin: 28.03 },
-  { datasul_code: '900001', sku: 'CIMED - Lavitan Colágeno Verisol Hibisco e Limão - Pote 300g', volume: 5000, catalog_cost: 20.1, catalog_price: 27.8, catalog_gross_price: 30.89, catalog_margin: 27.7 },
-  { datasul_code: '900045', sku: 'Calm Gut- Pote 175g', volume: 1000, catalog_cost: 32.5, catalog_price: 43.7, catalog_gross_price: 48.56, catalog_margin: 25.63 },
-  { datasul_code: '900045', sku: 'Calm Gut- Pote 175g', volume: 1500, catalog_cost: 31.9, catalog_price: 42.9, catalog_gross_price: 47.67, catalog_margin: 25.64 },
-  { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 3000, catalog_cost: 31.4, catalog_price: 42.1, catalog_gross_price: 46.78, catalog_margin: 25.42 },
-  { datasul_code: '900045', sku: 'Talita Tozzo - Calm Gut - Pote 175g', volume: 5000, catalog_cost: 30.8, catalog_price: 41.4, catalog_gross_price: 46.0, catalog_margin: 25.6 },
-];
-
 const MINIMUM_POLICY_STATUS = {
   NOT_CONFIGURED: 'not_configured',
   WITHIN_POLICY: 'within_policy',
@@ -224,9 +212,13 @@ const SimulationPage = ({ user }) => {
   
   const [history, setHistory] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
+  const [catalogStatus, setCatalogStatus] = useState('idle');
+  const [catalogError, setCatalogError] = useState('');
   const [clients, setClients] = useState([]);
   const [clientAliases, setClientAliases] = useState([]);
   const [minimumRules, setMinimumRules] = useState([]);
+  const [minimumRulesStatus, setMinimumRulesStatus] = useState('idle');
+  const [minimumRulesError, setMinimumRulesError] = useState('');
   const [loadingClients, setLoadingClients] = useState(false);
   const [importingMinimumRules, setImportingMinimumRules] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -259,53 +251,66 @@ const SimulationPage = ({ user }) => {
     return isPricingUser || item.user_id === authUser.id;
   }, [authUser?.id, isPricingUser]);
 
-  // Fetch catalog/products from DB
-  useEffect(() => {
-    const fetchCatalog = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('catalog_br_prices')
-          .select('*')
-          .order('sku', { ascending: true })
-          .order('volume', { ascending: true });
-        
-        if (error) throw error;
-        setCatalogProducts(data && data.length > 0 ? data : MOCK_CATALOG_PRODUCTS);
-      } catch (err) {
-        console.error('Error fetching catalog:', err);
-        setCatalogProducts(MOCK_CATALOG_PRODUCTS);
-      }
-    };
+  const loadCatalog = useCallback(async () => {
+    try {
+      setCatalogStatus('loading');
+      setCatalogError('');
 
-    fetchCatalog();
-  }, [history]);
+      const { data, error } = await supabase
+        .from('catalog_br_prices')
+        .select('*')
+        .order('sku', { ascending: true })
+        .order('volume', { ascending: true });
+
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('Catálogo Brasil indisponível ou sem itens cadastrados.');
+      }
+
+      setCatalogProducts(data);
+      setCatalogStatus('success');
+    } catch (err) {
+      console.error('Error fetching catalog:', err);
+      setCatalogProducts([]);
+      setCatalogStatus('error');
+      setCatalogError('Não foi possível carregar o catálogo Brasil. Os valores não podem ser calculados no momento.');
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
 
   const loadMinimumRules = useCallback(async () => {
     try {
+      setMinimumRulesStatus('loading');
+      setMinimumRulesError('');
+
       const { data, error } = await supabase
         .from('simulation_minimum_price_rules')
         .select('*')
         .order('versao', { ascending: true })
         .order('volume', { ascending: true });
 
-      if (error) {
-        if (String(error.message || '').toLowerCase().includes('does not exist')) {
-          setMinimumRules([]);
-          return;
-        }
-        throw error;
-      }
+      if (error) throw error;
 
       setMinimumRules(data || []);
+      setMinimumRulesStatus('success');
     } catch (err) {
       console.error('Error fetching minimum rules:', err);
       setMinimumRules([]);
+      setMinimumRulesStatus('error');
+      setMinimumRulesError('Não foi possível carregar as regras mínimas de preço. A simulação está bloqueada no momento.');
     }
   }, []);
 
   useEffect(() => {
     loadMinimumRules();
   }, [loadMinimumRules]);
+
+  const retrySimulationDependencies = useCallback(async () => {
+    await Promise.all([loadCatalog(), loadMinimumRules()]);
+  }, [loadCatalog, loadMinimumRules]);
 
   useEffect(() => {
     const loadClientData = async () => {
@@ -1310,6 +1315,72 @@ const SimulationPage = ({ user }) => {
       isWithinMinimumPolicy: selectedHistoryItem.is_within_minimum_policy !== false
     };
   }, [selectedHistoryItem]);
+
+  const simulationDependencyLoading = catalogStatus === 'loading' || minimumRulesStatus === 'loading';
+  const simulationReady = catalogStatus === 'success' && minimumRulesStatus === 'success';
+  const simulationDependencyErrors = [catalogError, minimumRulesError].filter(Boolean);
+
+  if (!simulationReady) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">
+        <Header
+          user={user}
+          title="Simulador de Preço e Margem"
+          subtitle="Ferramenta de cálculo e análise de rentabilidade"
+          showBack={false}
+          logoRedirect="/select"
+        />
+
+        <div className="max-w-4xl mx-auto px-6 py-12">
+          <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111111] p-10 shadow-sm">
+            <div className="mx-auto max-w-2xl text-center">
+              <div className={cn(
+                "mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full",
+                simulationDependencyLoading
+                  ? "bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400"
+                  : "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
+              )}>
+                {simulationDependencyLoading ? (
+                  <RefreshCcw className="h-8 w-8 animate-spin" />
+                ) : (
+                  <AlertTriangle className="h-8 w-8" />
+                )}
+              </div>
+
+              <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
+                {simulationDependencyLoading ? 'Carregando dados obrigatórios' : 'Simulador temporariamente indisponível'}
+              </h1>
+
+              <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+                {simulationDependencyLoading
+                  ? 'Estamos carregando o catálogo e as regras mínimas obrigatórias da simulação. Enquanto isso, os valores permanecem indisponíveis.'
+                  : 'Não foi possível carregar os dados obrigatórios da simulação. Os valores não podem ser calculados no momento.'}
+              </p>
+
+              {!simulationDependencyLoading && simulationDependencyErrors.length > 0 && (
+                <div className="mt-6 space-y-3 text-left">
+                  {simulationDependencyErrors.map((message) => (
+                    <div
+                      key={message}
+                      className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
+                    >
+                      {message}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-8">
+                <Button onClick={retrySimulationDependencies} disabled={simulationDependencyLoading} className="px-6">
+                  {simulationDependencyLoading ? 'Carregando...' : 'Tentar novamente'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-200">

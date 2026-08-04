@@ -16,6 +16,8 @@ import { RequireAuth, RequireArea } from "./components/RouteGuards";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider, useAuth, useAuthController } from "@/contexts/AuthContext";
 import { getAllowedAreasForRoute } from "@/lib/permissions";
+import EnvironmentConfigErrorScreen from "./components/EnvironmentConfigErrorScreen";
+import { hasSupabaseConfig, missingSupabaseEnvVars } from "@/lib/utils";
 
 function AppRoutes() {
   const { user } = useAuth();
@@ -150,6 +152,10 @@ function AppRoutes() {
 }
 
 function App() {
+  if (!hasSupabaseConfig) {
+    return <EnvironmentConfigErrorScreen missingVars={missingSupabaseEnvVars} />;
+  }
+
   return (
     <div className="App">
       <BrowserRouter>
