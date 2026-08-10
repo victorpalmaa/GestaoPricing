@@ -135,7 +135,9 @@ export function AuthProvider({ children }) {
       let nextUser = null;
 
       if (session?.user) {
-        if (remember || persistedSessionUser) {
+        const isPasswordRecoveryRoute = window.location.pathname === '/update-password';
+
+        if (remember || persistedSessionUser || isPasswordRecoveryRoute) {
           nextUser = session.user;
 
           if (remember && !localStorage.getItem("pronutrition_user")) {
