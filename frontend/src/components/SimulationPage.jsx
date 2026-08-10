@@ -27,6 +27,8 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
+import { logImport } from '@/utils/activityLog';
+import { parseVbaVersaoLabel, reconcileVbaCatalogRow } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 import {
   Popover,
@@ -54,6 +56,7 @@ const MINIMUM_POLICY_STATUS = {
 const SIMULATION_MODES = {
   MARGIN: 'simularMargem',
   PRICE: 'simularPreco',
+  FREIGHT: 'simularFrete',
   GROSS_CALCULATION: 'calculoPrecoBruto',
   NET_CALCULATION: 'calculoPrecoLiquido',
 };
@@ -456,6 +459,12 @@ const SimulationPage = ({ user }) => {
     calculate(costNum, priceNum, marginNum);
   }, [price, margin, cost, mode, pis, cofins, icms, grossPrice, comissao, frete, encargo, ipi]);
 
+  useEffect(() => {
+    if (mode !== SIMULATION_MODES.FREIGHT) {
+      setFrete(0);
+    }
+  }, [mode]);
+
   // Load history on mount
   useEffect(() => {
       loadHistory();
@@ -552,7 +561,7 @@ const SimulationPage = ({ user }) => {
       const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
 
       if (!Array.isArray(rows) || rows.length === 0) {
-        toast.error('A planilha de minimos esta vazia.');
+        toast.error('Planilha vazia.');
         return;
       }
 
@@ -564,13 +573,28 @@ const SimulationPage = ({ user }) => {
         const match = headers.find((header) => aliases.includes(normalizeHeader(header)));
         return match ? row[match] : '';
       };
+      const hasSpreadsheetValue = (value) =>
+        value !== null && value !== undefined && String(value).trim() !== '';
 
       const aliases = {
         id: ['id'],
         versao: ['versao', 'nome', 'produto'],
         margem: ['margem'],
         precobruto: ['precobruto', 'preco', 'precodevenda', 'precocheio'],
-        volume: ['volume', 'vol']
+        volume: ['volume', 'vol'],
+        custoTotal: ['custototal'],
+        precoLiq: ['precoliq'],
+        custoMp: ['customp'],
+        custoEmb: ['custoemb'],
+        custoPerda: ['custoperda'],
+        custoGgf: ['custoggf'],
+        custoMod: ['customod'],
+        freteValor: ['fretevalor'],
+        encargoValor: ['encargofinancvalor'],
+        comissaoValor: ['comissaovalor'],
+        impostosValor: ['impostosvalor'],
+        idVersaoVba: ['idversao'],
+        dataVersaoVba: ['dataversao'],
       };
 
       const firstRow = rows[0] || {};
@@ -584,31 +608,185 @@ const SimulationPage = ({ user }) => {
         })
         .map(([key]) => key);
 
-      if (missingColumns.length > 0) {
-        toast.error(`Colunas obrigatorias nao encontradas: ${missingColumns.join(', ')}. Detectadas: ${detectedHeaders.map((item) => item.normalized || item.original).join(', ')}`);
+      const obrigatorios = ['versao', 'margem', 'precobruto', 'volume'];
+      const faltamObrigatorios = missingColumns.filter((c) => obrigatorios.includes(c));
+
+      if (faltamObrigatorios.length > 0) {
+        toast.error(`Colunas obrigatorias ausentes: ${faltamObrigatorios.join(', ')}.`);
         return;
       }
+
+      const MINIMUM_VBA_NUMERIC_KEYS = [
+        'custoMp',
+        'custoEmb',
+        'custoPerda',
+        'custoGgf',
+        'custoMod',
+        'freteValor',
+        'encargoValor',
+        'comissaoValor',
+        'impostosValor',
+      ];
 
       const payloadByVersionAndVolume = new Map();
       let invalidRows = 0;
       let duplicatedRows = 0;
+      let reconciledRows = 0;
+      let importErrorDetails = [];
+      let warningRows = 0;
 
-      rows.forEach((row) => {
-        const versao = String(getValueByAliases(row, aliases.versao) || '').trim();
+      rows.forEach((row, idx) => {
+        const versaoRaw = getValueByAliases(row, aliases.versao);
         const margem = parseSpreadsheetNumber(getValueByAliases(row, aliases.margem));
         const precobruto = parseSpreadsheetNumber(getValueByAliases(row, aliases.precobruto));
         const volume = parseSpreadsheetNumber(getValueByAliases(row, aliases.volume));
+        const custoTotalRaw = getValueByAliases(row, aliases.custoTotal);
+        const precoLiqRaw = getValueByAliases(row, aliases.precoLiq);
+        const idVersaoVbaRaw = getValueByAliases(row, aliases.idVersaoVba);
+        const dataVersaoVbaRaw = getValueByAliases(row, aliases.dataVersaoVba);
+        const numericVbaRawValues = Object.fromEntries(
+          MINIMUM_VBA_NUMERIC_KEYS.map((key) => [
+            key,
+            getValueByAliases(row, aliases[key] || []),
+          ])
+        );
 
-        if (!versao || !Number.isFinite(volume) || (margem === null && precobruto === null)) {
+        const rowWarnings = [];
+
+        const parsedVersao = parseVbaVersaoLabel(versaoRaw, volume);
+        const versaoFinal = parsedVersao.skuLimpo;
+
+        if (parsedVersao.volumeExtraido !== null && parsedVersao.bateComVolume === false) {
+          rowWarnings.push(
+            `volume divergente: sufixo (NK) ${parsedVersao.volumeExtraido} vs coluna ${volume}`
+          );
+        }
+
+        if (!versaoFinal || !Number.isFinite(volume) || (margem === null && precobruto === null)) {
           invalidRows += 1;
+          if (importErrorDetails.length < 10) {
+            importErrorDetails.push(
+              `Linha ${idx + 2} | versao "${String(versaoRaw).trim()}" | vol ${volume} | campos obrigatórios ausentes`
+            );
+          }
           return;
         }
 
-        const normalizedVersion = normalizeLookupValue(versao);
+        const normalizedVersion = normalizeLookupValue(versaoFinal);
         const normalizedVolume = Number(volume);
-        if (!normalizedVersion || !normalizedVolume) {
-          invalidRows += 1;
-          return;
+
+        const hasAnyVbaData = (
+          hasSpreadsheetValue(custoTotalRaw)
+          || hasSpreadsheetValue(precoLiqRaw)
+          || hasSpreadsheetValue(idVersaoVbaRaw)
+          || hasSpreadsheetValue(dataVersaoVbaRaw)
+          || Object.values(numericVbaRawValues).some(hasSpreadsheetValue)
+        );
+
+        const parsedNumericVbaValues = Object.fromEntries(
+          Object.entries(numericVbaRawValues).map(([key, value]) => [
+            key,
+            parseSpreadsheetNumber(value),
+          ])
+        );
+        const custoTotal = parseSpreadsheetNumber(custoTotalRaw);
+        const precoLiq = parseSpreadsheetNumber(precoLiqRaw);
+
+        let vbaPayload = {};
+        if (hasAnyVbaData) {
+          const todosVbaNumericosPreenchidos = MINIMUM_VBA_NUMERIC_KEYS.every(
+            (key) => parsedNumericVbaValues[key] !== null
+              && parsedNumericVbaValues[key] !== undefined
+          );
+          const podeReconciliar = todosVbaNumericosPreenchidos
+            && custoTotal !== null
+            && precoLiq !== null
+            && precobruto !== null;
+
+          if (podeReconciliar) {
+            const reconciliation = reconcileVbaCatalogRow({
+              custoMp: parsedNumericVbaValues.custoMp,
+              custoEmb: parsedNumericVbaValues.custoEmb,
+              custoPerda: parsedNumericVbaValues.custoPerda,
+              custoGgf: parsedNumericVbaValues.custoGgf,
+              custoMod: parsedNumericVbaValues.custoMod,
+              freteValor: parsedNumericVbaValues.freteValor,
+              encargoValor: parsedNumericVbaValues.encargoValor,
+              comissaoValor: parsedNumericVbaValues.comissaoValor,
+              impostosValor: parsedNumericVbaValues.impostosValor,
+              custoTotal,
+              precoLiq,
+              precoBruto: precobruto,
+              margemInformada: margem,
+            });
+
+            if (!reconciliation.ok) {
+              invalidRows += 1;
+              if (importErrorDetails.length < 10) {
+                importErrorDetails.push(
+                  `Linha ${idx + 2} | SKU ${versaoFinal} | Vol ${volume} | ${reconciliation.errors.join(' | ')}`
+                );
+              }
+              return;
+            }
+
+            rowWarnings.push(...reconciliation.errors);
+            reconciledRows += 1;
+
+            vbaPayload = {
+              custo_total: custoTotal,
+              preco_liq: precoLiq,
+              custo_mp: parsedNumericVbaValues.custoMp,
+              custo_emb: parsedNumericVbaValues.custoEmb,
+              custo_perda: parsedNumericVbaValues.custoPerda,
+              custo_ggf: parsedNumericVbaValues.custoGgf,
+              custo_mod: parsedNumericVbaValues.custoMod,
+              frete_valor: parsedNumericVbaValues.freteValor,
+              encargo_valor: parsedNumericVbaValues.encargoValor,
+              comissao_valor: parsedNumericVbaValues.comissaoValor,
+              impostos_valor: parsedNumericVbaValues.impostosValor,
+              icms_rate: reconciliation.derived.icmsRate,
+              pis_rate: reconciliation.derived.pisRate,
+              cofins_rate: reconciliation.derived.cofinsRate,
+              frete_rate: reconciliation.derived.freteRate,
+              comissao_rate: reconciliation.derived.comissaoRate,
+              encargo_rate: reconciliation.derived.encargoRate,
+            };
+          }
+
+          if (hasSpreadsheetValue(idVersaoVbaRaw)) {
+            vbaPayload.id_versao_vba = String(idVersaoVbaRaw).trim();
+          }
+          if (hasSpreadsheetValue(dataVersaoVbaRaw)) {
+            const rawDate = dataVersaoVbaRaw;
+            let dataValida = null;
+            try {
+              if (rawDate instanceof Date && !Number.isNaN(rawDate.getTime())) {
+                dataValida = rawDate.toISOString().slice(0, 10);
+              } else {
+                const str = String(rawDate).trim();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+                  const d = new Date(str + 'T00:00:00');
+                  if (!Number.isNaN(d.getTime())) dataValida = str;
+                } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+                  const [d, m, y] = str.split('/');
+                  const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+                  if (!Number.isNaN(dateObj.getTime())) {
+                    dataValida = dateObj.toISOString().slice(0, 10);
+                  }
+                }
+              }
+            } catch (_) {
+              dataValida = null;
+            }
+            if (dataValida !== null) {
+              vbaPayload.data_versao_vba = dataValida;
+            }
+          }
+        }
+
+        if (rowWarnings.length > 0) {
+          warningRows += 1;
         }
 
         const uniqueKey = `${normalizedVersion}::${normalizedVolume}`;
@@ -618,17 +796,35 @@ const SimulationPage = ({ user }) => {
         }
 
         payloadByVersionAndVolume.set(uniqueKey, {
-          versao,
+          versao: versaoFinal,
           volume: normalizedVolume,
           margem,
-          precobruto
+          precobruto,
+          ...vbaPayload,
         });
       });
 
       const payload = Array.from(payloadByVersionAndVolume.values());
+      const sucessoCount = payload.length;
 
-      if (payload.length === 0) {
-        toast.error('Nenhuma linha valida foi encontrada para importar.');
+      if (sucessoCount === 0) {
+        const message = `Nenhuma linha valida. ${invalidRows} inválida(s). Detalhes no log.`;
+        try {
+          await logImport(
+            'simulation_minimum_price_rules',
+            0,
+            {
+              inseridos: 0,
+              atualizados: 0,
+              linhas_invalidas: invalidRows,
+              linhas_duplicadas: duplicatedRows,
+              linhas_com_warnings: warningRows,
+              linhas_reconciliadas_vba: reconciledRows,
+              erros_amostra: importErrorDetails,
+            }
+          );
+        } catch (_) { /* não bloquear */ }
+        toast.error(message);
         return;
       }
 
@@ -639,17 +835,39 @@ const SimulationPage = ({ user }) => {
       if (error) throw error;
 
       await loadMinimumRules();
-      toast.success(
-        invalidRows > 0 || duplicatedRows > 0
-          ? `Importacao concluida: ${payload.length} registro(s) importado(s), ${invalidRows} linha(s) invalida(s) e ${duplicatedRows} duplicada(s) consolidadas.`
-          : `Importacao concluida: ${payload.length} registro(s) importado(s).`
-      );
+
+      const detailsParts = [];
+      detailsParts.push(`${sucessoCount} OK`);
+      if (invalidRows > 0) detailsParts.push(`${invalidRows} inválida(s)`);
+      if (duplicatedRows > 0) detailsParts.push(`${duplicatedRows} duplicada(s)`);
+      if (warningRows > 0) detailsParts.push(`${warningRows} c/ aviso(s)`);
+      if (reconciledRows > 0) detailsParts.push(`${reconciledRows} reconcil. VBA`);
+      const details = detailsParts.join(', ');
+      const message = `${sucessoCount} importado(s): ${details}.`;
+
+      try {
+        await logImport(
+          'simulation_minimum_price_rules',
+          sucessoCount,
+          {
+            inseridos: sucessoCount,
+            atualizados: 0,
+            linhas_invalidas: invalidRows,
+            linhas_duplicadas: duplicatedRows,
+            linhas_com_warnings: warningRows,
+            linhas_reconciliadas_vba: reconciledRows,
+            erros_amostra: importErrorDetails,
+          }
+        );
+      } catch (_) { /* não bloquear */ }
+
+      toast.success(message);
     } catch (error) {
       console.error('Erro ao importar minimos:', error);
       toast.error(
         isPermissionError(error)
           ? getPermissionErrorMessage('Sua área não pode importar regras mínimas.')
-          : `Erro ao importar minimos: ${error.message || 'Erro desconhecido'}`
+          : `Erro: ${error.message || 'Erro desconhecido'}`
       );
     } finally {
       setImportingMinimumRules(false);
@@ -693,7 +911,7 @@ const SimulationPage = ({ user }) => {
         setMargin(result.marginPercent.toFixed(2));
       }
       setCalculationError('');
-    } else if (mode === SIMULATION_MODES.PRICE) {
+    } else if (mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) {
       const marginRate = marginNum / 100;
       const result = solveDisplayedPriceByMargin({
         custoTotal: costNum,
@@ -854,6 +1072,7 @@ const SimulationPage = ({ user }) => {
         pis: Number(pis),
         cofins: Number(cofins),
         icms: Number(icms),
+        frete: Number(frete),
         gross_price: parsedGrossPrice,
         user_email: user.email,
         user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
@@ -1230,6 +1449,7 @@ const SimulationPage = ({ user }) => {
   const showsMinimumPolicyWarnings = [
     SIMULATION_MODES.MARGIN,
     SIMULATION_MODES.PRICE,
+    SIMULATION_MODES.FREIGHT,
   ].includes(mode);
 
   const hidesCostInput = usesTaxesCalculator;
@@ -1238,9 +1458,11 @@ const SimulationPage = ({ user }) => {
     ? 'Margem Bruta Resultante'
     : mode === SIMULATION_MODES.PRICE
       ? 'Preço Bruto Sugerido'
-      : mode === SIMULATION_MODES.NET_CALCULATION
-        ? 'Preço Líquido Calculado'
-        : 'Preço Bruto Calculado';
+      : mode === SIMULATION_MODES.FREIGHT
+        ? 'Preço Bruto Sugerido'
+        : mode === SIMULATION_MODES.NET_CALCULATION
+          ? 'Preço Líquido Calculado'
+          : 'Preço Bruto Calculado';
 
   const currentSimulationDiscount = useMemo(() => {
     const catalogGrossPrice = Number(selectedCatalogEntry?.catalog_gross_price || 0);
@@ -1476,7 +1698,7 @@ const SimulationPage = ({ user }) => {
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
-                <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-1 h-auto p-1">
+                <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-1 h-auto p-1">
                   <TabsTrigger
                     value={SIMULATION_MODES.MARGIN}
                     className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
@@ -1488,6 +1710,12 @@ const SimulationPage = ({ user }) => {
                     className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
                   >
                     Simular Preço
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value={SIMULATION_MODES.FREIGHT}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Simular Frete
                   </TabsTrigger>
                   <TabsTrigger
                     value={SIMULATION_MODES.GROSS_CALCULATION}
@@ -1518,10 +1746,10 @@ const SimulationPage = ({ user }) => {
                           value={cost} 
                           onChange={(e) => setCost(e.target.value)}
                           onBlur={(e) => handleBlur(setCost, e.target.value)}
-                          disabled={mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE}
+                          disabled={mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT}
                           className={cn(
                             "pl-8",
-                            (mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                            (mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
                           )}
                         />
                       </div>
@@ -1530,7 +1758,7 @@ const SimulationPage = ({ user }) => {
                         {formatCurrency(Number(cost))}
                       </div>
                     )}
-                    {(mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && (
+                    {(mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) && (
                        <p className="text-[10px] text-muted-foreground">O custo é fixo baseado no produto selecionado.</p>
                     )}
                   </div>
@@ -1571,6 +1799,59 @@ const SimulationPage = ({ user }) => {
                         onBlur={(e) => handleBlur(setMargin, e.target.value, { normalizePercent: true })}
                         className="pl-8 font-semibold text-lg"
                       />
+                    </div>
+                  </div>
+                ) : mode === SIMULATION_MODES.FREIGHT ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="freight">Frete (%)</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">%</span>
+                          <Input 
+                            id="freight" 
+                            type="number" 
+                            value={frete} 
+                            onChange={(e) => {
+                              setHasManualInput(true);
+                              setFrete(e.target.value);
+                            }}
+                            onBlur={(e) => handleBlur(setFrete, e.target.value)}
+                            className="pl-8 font-semibold text-lg"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="margin">Margem Alvo (%)</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">%</span>
+                          <Input 
+                            id="margin" 
+                            type="number" 
+                            value={margin} 
+                            onChange={(e) => {
+                              setHasManualInput(true);
+                              setMargin(e.target.value);
+                            }}
+                            onBlur={(e) => handleBlur(setMargin, e.target.value, { normalizePercent: true })}
+                            className="pl-8 font-semibold text-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-gray-200 dark:border-gray-800">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preço Líquido</Label>
+                        <div className="rounded-md border bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-not-allowed">
+                          {formatCurrency(Number(price) || 0)}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preço Bruto</Label>
+                        <div className="rounded-md border bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-not-allowed">
+                          {formatCurrency(Number(grossPrice) || 0)}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ) : (
