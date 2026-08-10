@@ -56,6 +56,7 @@ const MINIMUM_POLICY_STATUS = {
 const SIMULATION_MODES = {
   MARGIN: 'simularMargem',
   PRICE: 'simularPreco',
+  FREIGHT: 'simularFrete',
   GROSS_CALCULATION: 'calculoPrecoBruto',
   NET_CALCULATION: 'calculoPrecoLiquido',
 };
@@ -457,6 +458,12 @@ const SimulationPage = ({ user }) => {
 
     calculate(costNum, priceNum, marginNum);
   }, [price, margin, cost, mode, pis, cofins, icms, grossPrice, comissao, frete, encargo, ipi]);
+
+  useEffect(() => {
+    if (mode !== SIMULATION_MODES.FREIGHT) {
+      setFrete(0);
+    }
+  }, [mode]);
 
   // Load history on mount
   useEffect(() => {
@@ -904,7 +911,7 @@ const SimulationPage = ({ user }) => {
         setMargin(result.marginPercent.toFixed(2));
       }
       setCalculationError('');
-    } else if (mode === SIMULATION_MODES.PRICE) {
+    } else if (mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) {
       const marginRate = marginNum / 100;
       const result = solveDisplayedPriceByMargin({
         custoTotal: costNum,
@@ -1065,6 +1072,7 @@ const SimulationPage = ({ user }) => {
         pis: Number(pis),
         cofins: Number(cofins),
         icms: Number(icms),
+        frete: Number(frete),
         gross_price: parsedGrossPrice,
         user_email: user.email,
         user_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0],
@@ -1441,6 +1449,7 @@ const SimulationPage = ({ user }) => {
   const showsMinimumPolicyWarnings = [
     SIMULATION_MODES.MARGIN,
     SIMULATION_MODES.PRICE,
+    SIMULATION_MODES.FREIGHT,
   ].includes(mode);
 
   const hidesCostInput = usesTaxesCalculator;
@@ -1449,9 +1458,11 @@ const SimulationPage = ({ user }) => {
     ? 'Margem Bruta Resultante'
     : mode === SIMULATION_MODES.PRICE
       ? 'Preço Bruto Sugerido'
-      : mode === SIMULATION_MODES.NET_CALCULATION
-        ? 'Preço Líquido Calculado'
-        : 'Preço Bruto Calculado';
+      : mode === SIMULATION_MODES.FREIGHT
+        ? 'Preço Bruto Sugerido'
+        : mode === SIMULATION_MODES.NET_CALCULATION
+          ? 'Preço Líquido Calculado'
+          : 'Preço Bruto Calculado';
 
   const currentSimulationDiscount = useMemo(() => {
     const catalogGrossPrice = Number(selectedCatalogEntry?.catalog_gross_price || 0);
@@ -1687,7 +1698,7 @@ const SimulationPage = ({ user }) => {
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
-                <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-1 h-auto p-1">
+                <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-1 h-auto p-1">
                   <TabsTrigger
                     value={SIMULATION_MODES.MARGIN}
                     className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
@@ -1699,6 +1710,12 @@ const SimulationPage = ({ user }) => {
                     className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
                   >
                     Simular Preço
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value={SIMULATION_MODES.FREIGHT}
+                    className="h-auto min-h-[44px] whitespace-normal px-3 py-2 text-center leading-tight"
+                  >
+                    Simular Frete
                   </TabsTrigger>
                   <TabsTrigger
                     value={SIMULATION_MODES.GROSS_CALCULATION}
@@ -1729,10 +1746,10 @@ const SimulationPage = ({ user }) => {
                           value={cost} 
                           onChange={(e) => setCost(e.target.value)}
                           onBlur={(e) => handleBlur(setCost, e.target.value)}
-                          disabled={mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE}
+                          disabled={mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT}
                           className={cn(
                             "pl-8",
-                            (mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                            (mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) && "bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
                           )}
                         />
                       </div>
@@ -1741,7 +1758,7 @@ const SimulationPage = ({ user }) => {
                         {formatCurrency(Number(cost))}
                       </div>
                     )}
-                    {(mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE) && (
+                    {(mode === SIMULATION_MODES.MARGIN || mode === SIMULATION_MODES.PRICE || mode === SIMULATION_MODES.FREIGHT) && (
                        <p className="text-[10px] text-muted-foreground">O custo é fixo baseado no produto selecionado.</p>
                     )}
                   </div>
@@ -1782,6 +1799,59 @@ const SimulationPage = ({ user }) => {
                         onBlur={(e) => handleBlur(setMargin, e.target.value, { normalizePercent: true })}
                         className="pl-8 font-semibold text-lg"
                       />
+                    </div>
+                  </div>
+                ) : mode === SIMULATION_MODES.FREIGHT ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="freight">Frete (%)</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">%</span>
+                          <Input 
+                            id="freight" 
+                            type="number" 
+                            value={frete} 
+                            onChange={(e) => {
+                              setHasManualInput(true);
+                              setFrete(e.target.value);
+                            }}
+                            onBlur={(e) => handleBlur(setFrete, e.target.value)}
+                            className="pl-8 font-semibold text-lg"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="margin">Margem Alvo (%)</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground">%</span>
+                          <Input 
+                            id="margin" 
+                            type="number" 
+                            value={margin} 
+                            onChange={(e) => {
+                              setHasManualInput(true);
+                              setMargin(e.target.value);
+                            }}
+                            onBlur={(e) => handleBlur(setMargin, e.target.value, { normalizePercent: true })}
+                            className="pl-8 font-semibold text-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-gray-200 dark:border-gray-800">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preço Líquido</Label>
+                        <div className="rounded-md border bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-not-allowed">
+                          {formatCurrency(Number(price) || 0)}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preço Bruto</Label>
+                        <div className="rounded-md border bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-not-allowed">
+                          {formatCurrency(Number(grossPrice) || 0)}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ) : (
