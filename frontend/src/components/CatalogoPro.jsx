@@ -46,13 +46,25 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
-import { logExport } from '@/utils/activityLog';
+import { logExport, logImport } from '@/utils/activityLog';
+import { parseVbaVersaoLabel, reconcileVbaCatalogRow } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
 const DEFAULT_CATEGORIES = ['Pó', 'Gel', 'Goma', 'Softgel'];
 const EXPIRY_DATE_TEXT = '31/08/2026';
 const EXPIRY_DATE = new Date(2026, 7, 31);
+const BRAZIL_VBA_NUMERIC_ALIAS_KEYS = [
+  'custoMp',
+  'custoEmb',
+  'custoPerda',
+  'custoGgf',
+  'custoMod',
+  'freteValor',
+  'encargoValor',
+  'comissaoValor',
+  'impostosValor',
+];
 
 const BrazilMapIcon = ({ size = 28, className = '' }) => (
   <svg
@@ -130,12 +142,24 @@ const CATALOG_CONFIG = {
     importAliases: {
       id: ['ID', 'id'],
       sku: ['SKU', 'sku'],
-      cost: ['Custo', 'custo'],
+      cost: ['Custo', 'custo', 'custototal'],
       margin: ['Margem', 'margem'],
-      primaryPrice: ['Preço Líquido', 'Preco Liquido', 'Preco Líquido', 'preco liquido', 'Preço em R$', 'Preco em R$'],
-      secondaryPrice: ['Preço Bruto', 'Preco Bruto', 'Preco bruto', 'preco bruto', 'Preço em $', 'Preco em $'],
+      primaryPrice: ['Preço Líquido', 'Preco Liquido', 'Preco Líquido', 'preco liquido', 'Preço em R$', 'Preco em R$', 'precoliq'],
+      secondaryPrice: ['Preço Bruto', 'Preco Bruto', 'Preco bruto', 'preco bruto', 'Preço em $', 'Preco em $', 'precobruto'],
       volume: ['Volume', 'volume'],
       category: ['Categoria', 'categoria', 'category'],
+      custoMp: ['customp'],
+      custoEmb: ['custoemb'],
+      custoPerda: ['custoperda'],
+      custoGgf: ['custoggf'],
+      custoMod: ['customod'],
+      freteValor: ['fretevalor'],
+      encargoValor: ['encargofinancvalor'],
+      comissaoValor: ['comissaovalor'],
+      impostosValor: ['impostosvalor'],
+      idVersaoVba: ['idversao'],
+      dataVersaoVba: ['dataversao'],
+      versao: ['versao'],
     },
   },
   latam: {
@@ -207,6 +231,33 @@ const parseNumber = (value) => {
 
   const parsed = Number(normalized);
   return Number.isNaN(parsed) ? null : parsed;
+};
+
+const hasSpreadsheetValue = (value) => (
+  value !== null
+  && value !== undefined
+  && String(value).trim() !== ''
+);
+
+const parseSpreadsheetDateValue = (value) => {
+  if (!hasSpreadsheetValue(value)) return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  if (typeof value === 'number') {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (!parsed) return null;
+    const date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H || 0, parsed.M || 0, parsed.S || 0));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const parsed = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString();
 };
 
 const formatCurrency = (value, symbol = 'R$') => {
@@ -521,27 +572,33 @@ const CatalogoPro = ({ user }) => {
       };
 
       const requiredHeaders = [
-        selectedCatalogConfig.importAliases.id,
-        selectedCatalogConfig.importAliases.sku,
-        selectedCatalogConfig.importAliases.cost,
-        selectedCatalogConfig.importAliases.margin,
-        selectedCatalogConfig.importAliases.primaryPrice,
-        selectedCatalogConfig.importAliases.secondaryPrice,
-        selectedCatalogConfig.importAliases.volume,
-        selectedCatalogConfig.importAliases.category,
+        { label: 'ID', candidates: selectedCatalogConfig.importAliases.id },
+        {
+          label: 'SKU',
+          candidates: selectedCatalogConfig.importAliases.sku,
+          alternatives: selectedCatalogConfig.importAliases.versao ? [selectedCatalogConfig.importAliases.versao] : [],
+        },
+        { label: 'Custo', candidates: selectedCatalogConfig.importAliases.cost },
+        { label: 'Margem', candidates: selectedCatalogConfig.importAliases.margin },
+        { label: 'Preço Líquido', candidates: selectedCatalogConfig.importAliases.primaryPrice },
+        { label: 'Preço Bruto', candidates: selectedCatalogConfig.importAliases.secondaryPrice },
+        { label: 'Volume', candidates: selectedCatalogConfig.importAliases.volume },
+        { label: 'Categoria', candidates: selectedCatalogConfig.importAliases.category },
       ];
 
       const firstRow = jsonRows[0] || {};
-      const missingColumns = requiredHeaders.filter((candidates) => {
-        const value = getValueByHeader(firstRow, candidates);
-        return value === '' && !Object.keys(firstRow).some((header) => {
-          const normalized = normalizeHeader(header);
-          return candidates.some((candidate) => normalizeHeader(candidate) === normalized);
-        });
+      const headerExists = (candidates = []) => Object.keys(firstRow).some((header) => {
+        const normalized = normalizeHeader(header);
+        return candidates.some((candidate) => normalizeHeader(candidate) === normalized);
+      });
+      const missingColumns = requiredHeaders.filter(({ candidates, alternatives = [] }) => {
+        const hasPrimaryHeader = headerExists(candidates);
+        const hasAlternativeHeader = alternatives.some((alternativeCandidates) => headerExists(alternativeCandidates));
+        return !hasPrimaryHeader && !hasAlternativeHeader;
       });
 
       if (missingColumns.length > 0) {
-        toast.error(`Colunas obrigatórias não encontradas: ${missingColumns.map((item) => item[0]).join(', ')}`);
+        toast.error(`Colunas obrigatórias não encontradas: ${missingColumns.map((item) => item.label).join(', ')}`);
         return;
       }
 
@@ -559,14 +616,17 @@ const CatalogoPro = ({ user }) => {
 
       let successCount = 0;
       let errorCount = 0;
+      let warningCount = 0;
       let replacedByIdCount = 0;
       let updatedBySkuVolumeCount = 0;
       let insertedCount = 0;
       const replacedByIdDetails = [];
+      const importErrorDetails = [];
+      const importWarningDetails = [];
 
       for (const row of jsonRows) {
         const idRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.id);
-        const skuRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.sku);
+        const skuRawDireto = getValueByHeader(row, selectedCatalogConfig.importAliases.sku);
         const categoryRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.category);
         const volumeRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.volume);
         const costRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.cost);
@@ -575,22 +635,153 @@ const CatalogoPro = ({ user }) => {
         const secondaryPriceRaw = getValueByHeader(row, selectedCatalogConfig.importAliases.secondaryPrice);
 
         const catalogId = String(idRaw || '').trim();
-        const sku = String(skuRaw || '').trim();
         const category = String(categoryRaw || '').trim();
         const volume = Number(parseNumber(volumeRaw));
         const catalogCost = parseNumber(costRaw);
         const catalogMargin = parseNumber(marginRaw);
         const primaryPrice = parseNumber(primaryPriceRaw);
         const secondaryPrice = parseNumber(secondaryPriceRaw);
+        const isBrazilImport = selectedCatalogConfig.key === 'brazil';
+        const versaoRaw = isBrazilImport
+          ? getValueByHeader(row, selectedCatalogConfig.importAliases.versao)
+          : '';
+        const numericVbaRawValues = isBrazilImport
+          ? Object.fromEntries(
+            BRAZIL_VBA_NUMERIC_ALIAS_KEYS.map((key) => [
+              key,
+              getValueByHeader(row, selectedCatalogConfig.importAliases[key] || []),
+            ])
+          )
+          : {};
+        const idVersaoVbaRaw = isBrazilImport
+          ? getValueByHeader(row, selectedCatalogConfig.importAliases.idVersaoVba || [])
+          : '';
+        const dataVersaoVbaRaw = isBrazilImport
+          ? getValueByHeader(row, selectedCatalogConfig.importAliases.dataVersaoVba || [])
+          : '';
+        const hasAnyVbaData = isBrazilImport && (
+          hasSpreadsheetValue(versaoRaw)
+          || hasSpreadsheetValue(idVersaoVbaRaw)
+          || hasSpreadsheetValue(dataVersaoVbaRaw)
+          || Object.values(numericVbaRawValues).some(hasSpreadsheetValue)
+        );
+        const rowWarnings = [];
+        let sku;
+        let volumeWarning = null;
+
+        if (hasSpreadsheetValue(skuRawDireto)) {
+          sku = String(skuRawDireto).trim();
+        } else if (hasSpreadsheetValue(versaoRaw)) {
+          const parsed = parseVbaVersaoLabel(versaoRaw, volume);
+          sku = parsed.skuLimpo;
+          if (parsed.volumeExtraido === null) {
+            rowWarnings.push(`versão sem sufixo (NK): ${String(versaoRaw).trim()}`);
+          } else if (parsed.bateComVolume === false) {
+            volumeWarning = 'divergencia_volume_versao';
+            rowWarnings.push(
+              `versão/volume divergentes: versão ${formatVolume(parsed.volumeExtraido)} vs coluna ${formatVolume(volume)}`
+            );
+          }
+        } else {
+          sku = '';
+        }
 
         if (!catalogId || !sku || !category || !VOLUMES.includes(volume)) {
           errorCount += 1;
+          if (importErrorDetails.length < 10) {
+            importErrorDetails.push(
+              `ID ${catalogId || 'sem ID'} | SKU ${sku || 'sem SKU'} | Vol ${formatVolume(volumeRaw)} | campos obrigatórios inválidos`
+            );
+          }
           continue;
         }
 
         if ([catalogCost, catalogMargin, primaryPrice, secondaryPrice].some((item) => item === null)) {
           errorCount += 1;
+          if (importErrorDetails.length < 10) {
+            importErrorDetails.push(
+              `ID ${catalogId} | SKU ${sku} | Vol ${formatVolume(volume)} | custo/margem/preços inválidos`
+            );
+          }
           continue;
+        }
+
+        let vbaPayload = {};
+
+        if (hasAnyVbaData) {
+          const hasAnyVbaNumericData = Object.values(numericVbaRawValues).some(hasSpreadsheetValue);
+
+          if (hasAnyVbaNumericData) {
+            const parsedNumericVbaValues = Object.fromEntries(
+              Object.entries(numericVbaRawValues).map(([key, rawValue]) => [key, parseNumber(rawValue)])
+            );
+            const missingNumericFields = Object.entries(parsedNumericVbaValues)
+              .filter(([, value]) => value === null)
+              .map(([key]) => key);
+
+            if (missingNumericFields.length > 0) {
+              errorCount += 1;
+              if (importErrorDetails.length < 10) {
+                importErrorDetails.push(
+                  `ID ${catalogId} | SKU ${sku} | Vol ${formatVolume(volume)} | campos VBA inválidos: ${missingNumericFields.join(', ')}`
+                );
+              }
+              continue;
+            }
+
+            const reconciliation = reconcileVbaCatalogRow({
+              custoMp: parsedNumericVbaValues.custoMp,
+              custoEmb: parsedNumericVbaValues.custoEmb,
+              custoPerda: parsedNumericVbaValues.custoPerda,
+              custoGgf: parsedNumericVbaValues.custoGgf,
+              custoMod: parsedNumericVbaValues.custoMod,
+              freteValor: parsedNumericVbaValues.freteValor,
+              encargoValor: parsedNumericVbaValues.encargoValor,
+              comissaoValor: parsedNumericVbaValues.comissaoValor,
+              impostosValor: parsedNumericVbaValues.impostosValor,
+              custoTotal: catalogCost,
+              precoLiq: primaryPrice,
+              precoBruto: secondaryPrice,
+              margemInformada: catalogMargin,
+            });
+
+            if (!reconciliation.ok) {
+              errorCount += 1;
+              if (importErrorDetails.length < 10) {
+                importErrorDetails.push(
+                  `ID ${catalogId} | SKU ${sku} | Vol ${formatVolume(volume)} | ${reconciliation.errors.join(' | ')}`
+                );
+              }
+              continue;
+            }
+
+            rowWarnings.push(...reconciliation.errors);
+            vbaPayload = {
+              custo_mp: parsedNumericVbaValues.custoMp,
+              custo_emb: parsedNumericVbaValues.custoEmb,
+              custo_perda: parsedNumericVbaValues.custoPerda,
+              custo_ggf: parsedNumericVbaValues.custoGgf,
+              custo_mod: parsedNumericVbaValues.custoMod,
+              frete_valor: parsedNumericVbaValues.freteValor,
+              encargo_valor: parsedNumericVbaValues.encargoValor,
+              comissao_valor: parsedNumericVbaValues.comissaoValor,
+              impostos_valor: parsedNumericVbaValues.impostosValor,
+              icms_rate: reconciliation.derived.icmsRate,
+              pis_rate: reconciliation.derived.pisRate,
+              cofins_rate: reconciliation.derived.cofinsRate,
+              frete_rate: reconciliation.derived.freteRate,
+              comissao_rate: reconciliation.derived.comissaoRate,
+              encargo_rate: reconciliation.derived.encargoRate,
+            };
+          }
+
+          if (hasSpreadsheetValue(idVersaoVbaRaw)) {
+            vbaPayload.id_versao_vba = String(idVersaoVbaRaw).trim();
+          }
+
+          if (hasSpreadsheetValue(dataVersaoVbaRaw)) {
+            vbaPayload.data_versao_vba = parseSpreadsheetDateValue(dataVersaoVbaRaw);
+          }
         }
 
         const existingRowById = existingByCatalogId.get(catalogId);
@@ -605,6 +796,7 @@ const CatalogoPro = ({ user }) => {
           [selectedCatalogConfig.marginField]: catalogMargin,
           [selectedCatalogConfig.primaryPriceField]: primaryPrice,
           [selectedCatalogConfig.secondaryPriceField]: secondaryPrice,
+          ...vbaPayload,
         };
 
         if (selectedCatalogConfig.preserveDatasulCode && existingRow?.datasul_code) {
@@ -633,6 +825,14 @@ const CatalogoPro = ({ user }) => {
         }
 
         successCount += 1;
+        if (rowWarnings.length > 0) {
+          warningCount += 1;
+          if (importWarningDetails.length < 10) {
+            importWarningDetails.push(
+              `ID ${catalogId} | SKU ${sku} | Vol ${formatVolume(volume)} | ${rowWarnings.join(' | ')}`
+            );
+          }
+        }
 
         if (existingRowById) {
           replacedByIdCount += 1;
@@ -656,13 +856,42 @@ const CatalogoPro = ({ user }) => {
           `${insertedCount} novo(s)`,
           `${updatedBySkuVolumeCount} atualizado(s) por SKU/volume`,
           `${replacedByIdCount} substituído(s) por ID existente`,
-        ].join(' | ');
-        const replacedMessage = replacedByIdDetails.length > 0
-          ? ` IDs substituídos: ${replacedByIdDetails.slice(0, 5).join('; ')}${replacedByIdDetails.length > 5 ? ' ...' : ''}.`
-          : '';
-        toast.success(`${successCount} linhas inseridas/atualizadas com sucesso. ${errorCount} erro(s). ${details}.${replacedMessage}`);
+        ].join(', ');
+        const message = `${successCount} processado(s): ${details}${warningCount > 0 ? `, ${warningCount} aviso(s)` : ''}${errorCount > 0 ? `, ${errorCount} erro(s)` : ''}. Detalhes no log de atividades.`;
+
+        if (selectedCatalogConfig.key === 'brazil') {
+          logImport(
+            'catalog_br_prices',
+            successCount,
+            {
+              inseridos: insertedCount,
+              atualizados: updatedBySkuVolumeCount,
+              substituidos: replacedByIdCount,
+              avisos: [...importWarningDetails],
+              erros: [...importErrorDetails],
+            }
+          );
+        }
+
+        toast.success(message);
       } else {
-        toast.error(`Nenhuma linha importada. ${errorCount} erro(s) encontrados.`);
+        const message = `Nenhuma linha importada. ${errorCount} erro(s) encontrados. Detalhes no log de atividades.`;
+
+        if (selectedCatalogConfig.key === 'brazil' && errorCount > 0) {
+          logImport(
+            'catalog_br_prices',
+            0,
+            {
+              inseridos: 0,
+              atualizados: 0,
+              substituidos: 0,
+              avisos: [...importWarningDetails],
+              erros: [...importErrorDetails],
+            }
+          );
+        }
+
+        toast.error(message);
       }
     } catch (error) {
       console.error('Erro ao importar catálogo:', error);
@@ -1251,19 +1480,30 @@ const CatalogoPro = ({ user }) => {
             </div>
 
             <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
-              <p className="font-medium text-gray-900 dark:text-white">
-                A planilha deve conter estas colunas:
-              </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <p>- ID</p>
-                <p>- SKU</p>
-                <p>- Custo</p>
-                <p>- Margem</p>
-                <p>- {selectedCatalogConfig?.pricingPrimaryPriceLabel || 'Preço Líquido'}</p>
-                <p>- {selectedCatalogConfig?.pricingSecondaryPriceLabel || 'Preço Bruto'}</p>
-                <p>- Volume</p>
-                <p>- Categoria</p>
-              </div>
+              {selectedCatalogConfig?.key === 'brazil' ? (
+                <>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    A planilha deve conter: ID, SKU (ou Versão), Custo, Margem, {selectedCatalogConfig?.pricingPrimaryPriceLabel || 'Preço Líquido'}, {selectedCatalogConfig?.pricingSecondaryPriceLabel || 'Preço Bruto'}, Volume, Categoria.
+                  </p>
+                  <details className="group">
+                    <summary className="cursor-pointer select-none text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+                      Colunas avançadas (opcional)
+                    </summary>
+                    <div className="mt-2 space-y-2 pl-3 text-xs text-gray-500 dark:text-gray-400">
+                      <p>
+                        Se presentes, o sistema calcula e confere as taxas fiscais automaticamente: Custo MP, Custo Emb, Custo Perda, Custo GGF, Custo MOD, Frete Valor, Encargo Financ Valor, Comissão Valor, Impostos Valor, ID Versão, Data Versão.
+                      </p>
+                      <p>
+                        Se usar Versão no lugar de SKU, inclua o volume entre parênteses no nome do produto — ex: &quot;Produto X (5K)&quot;. O sistema confere se bate com a coluna Volume e avisa se não bater.
+                      </p>
+                    </div>
+                  </details>
+                </>
+              ) : (
+                <p className="font-medium text-gray-900 dark:text-white">
+                  A planilha deve conter: ID, SKU, Custo, Margem, {selectedCatalogConfig?.pricingPrimaryPriceLabel || 'Preço Líquido'}, {selectedCatalogConfig?.pricingSecondaryPriceLabel || 'Preço Bruto'}, Volume, Categoria.
+                </p>
+              )}
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Volumes aceitos: `1000`, `1500`, `3000` e `5000`.
               </p>
