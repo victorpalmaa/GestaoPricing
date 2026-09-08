@@ -361,13 +361,14 @@ const PricingAnalytics = ({ user, setUser }) => {
     // Performance por SKU
     const skuData = {};
     safePricingData.forEach(item => {
-      if (!skuData[item.sku]) {
-        skuData[item.sku] = { sku: item.sku, total: 0, totalGross: 0, count: 0, avgPrice: 0, avgMargin: 0, marginTotal: 0 };
+      if (!item.code) return;
+      if (!skuData[item.code]) {
+        skuData[item.code] = { code: item.code, sku: item.sku, total: 0, totalGross: 0, count: 0, avgPrice: 0, avgMargin: 0, marginTotal: 0 };
       }
-      skuData[item.sku].total += Number(item.net_price || 0);
-      skuData[item.sku].totalGross += Number(item.gross_price || 0);
-      skuData[item.sku].count += 1;
-      skuData[item.sku].marginTotal += Number(item.margin_budget || 0);
+      skuData[item.code].total += Number(item.net_price || 0);
+      skuData[item.code].totalGross += Number(item.gross_price || 0);
+      skuData[item.code].count += 1;
+      skuData[item.code].marginTotal += Number(item.margin_budget || 0);
     });
 
     Object.values(skuData).forEach(sku => {

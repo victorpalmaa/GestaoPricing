@@ -228,10 +228,8 @@ const CS = ({ user }) => {
       data.forEach(item => {
         if (!item.date || !item.client_id) return;
         const normalizedCode = normalizeGroupText(item.code);
-        const normalizedSku = normalizeGroupText(item.sku);
-        const referenceKey = normalizedCode || normalizedSku;
-        if (!referenceKey) return;
-        const key = `${item.client_id}-${referenceKey}`;
+        if (!normalizedCode) return;
+        const key = `${item.client_id}-${normalizedCode}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(item);
       });
@@ -1875,28 +1873,31 @@ const CS = ({ user }) => {
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center justify-between">
                     <span>SKUs na Seleção</span>
                     <span className="text-xs font-normal text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-full">
-                      {[...new Set(filteredData.map(i => i.sku))].length} SKUs
+                      {[...new Set(filteredData.map(i => i.code).filter(Boolean))].length} SKUs
                     </span>
                   </h3>
                   <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                    {[...new Set(filteredData.map(i => i.sku))].sort().map((sku, idx) => (
+                    {[...new Set(filteredData.map(i => i.code).filter(Boolean))].sort().map((code, idx) => {
+                      const refItem = filteredData.find(i => i.code === code);
+                      const skuLabel = refItem?.sku || code;
+                      return (
                       <div 
                         key={idx} 
                         className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-sm text-gray-700 dark:text-gray-300 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors flex justify-between items-center cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
                         onClick={() => {
-                          const item = filteredData.find(i => i.sku === sku);
+                          const item = filteredData.find(i => i.code === code);
                           if (item) {
                             setSelectedItem(item);
                             setIsHistoryModalOpen(true);
                           }
                         }}
                       >
-                        <span>{sku}</span>
+                        <span>{skuLabel}</span>
                         <span className="text-xs text-gray-400">
-                           {filteredData.find(i => i.sku === sku)?.client_name}
+                           {filteredData.find(i => i.code === code)?.client_name}
                         </span>
                       </div>
-                    ))}
+                    );})}
                     {filteredData.length === 0 && (
                        <p className="text-gray-500 text-center py-4">Nenhum SKU encontrado</p>
                     )}

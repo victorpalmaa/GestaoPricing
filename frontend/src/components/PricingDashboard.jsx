@@ -234,7 +234,7 @@ const PricingDashboard = ({ user }) => {
     return Number.isNaN(parsed) ? null : parsed;
   }
 
-  const getGroupKey = (clientId, sku) => `${clientId}::${(sku || '').toString().trim().toUpperCase()}`;
+  const getGroupKey = (clientId, code) => `${clientId}::${(code || '').toString().trim()}`;
 
   const comparePricingRows = (a, b) => {
     if (Boolean(a.is_current) !== Boolean(b.is_current)) {
@@ -256,12 +256,12 @@ const PricingDashboard = ({ user }) => {
     return String(b.id).localeCompare(String(a.id));
   };
 
-  const setCurrentPriceForSku = async ({ clientId, sku, currentId }) => {
+  const setCurrentPriceForSku = async ({ clientId, code, currentId }) => {
     const { error: clearError } = await supabase
       .from('pricing_history')
       .update({ is_current: false })
       .eq('client_id', clientId)
-      .eq('sku', sku)
+      .eq('code', code)
       .neq('id', currentId);
 
     if (clearError) throw clearError;
@@ -477,7 +477,7 @@ const PricingDashboard = ({ user }) => {
 
       const groupedRows = new Map();
       (pricingDataRaw || []).forEach(item => {
-        const key = getGroupKey(item.client_id, item.sku);
+        const key = getGroupKey(item.client_id, item.code);
         if (!groupedRows.has(key)) {
           groupedRows.set(key, []);
         }
@@ -555,7 +555,7 @@ const PricingDashboard = ({ user }) => {
           category,
           subcategory,
           month,
-          isCurrent: item.id === currentIdMap.get(getGroupKey(item.client_id, item.sku))
+          isCurrent: item.id === currentIdMap.get(getGroupKey(item.client_id, item.code))
         };
       });
 
@@ -847,6 +847,7 @@ const PricingDashboard = ({ user }) => {
           const missingFields = [];
           if (!('client' in firstRow)) missingFields.push('Cliente');
           if (!('sku' in firstRow)) missingFields.push('SKU');
+          if (!('code' in firstRow)) missingFields.push('Código');
           if (!('net_price' in firstRow)) missingFields.push('Preço Liquido');
           // Mês ou Data deve existir
           if (!('month' in firstRow) && !('date' in firstRow)) missingFields.push('Mês ou Data');
@@ -877,6 +878,15 @@ const PricingDashboard = ({ user }) => {
             // Validar SKU
             const sku = row['sku']?.toString().trim();
             if (!sku) {
+              errorCount++;
+              continue;
+            }
+
+            // Validar Código (obrigatório + formato Datasul \d{4}\.\d{4}\.\d{4})
+            const codigoRegex = /^\d{4}\.\d{4}\.\d{4}$/;
+            const code = row['code']?.toString().trim();
+            if (!code || !codigoRegex.test(code)) {
+              console.warn(`Código Datasul inválido ou ausente para ${clientNameRaw} - ${sku}: ${row['code'] || '(vazio)'}. Esperado: 0000.0000.0000`);
               errorCount++;
               continue;
             }
@@ -1015,7 +1025,7 @@ const PricingDashboard = ({ user }) => {
               margin_budget: isNaN(marginBudget) ? null : marginBudget,
               size: row['size']?.toString().trim() || null,
               manager: row['manager']?.toString().trim() || null,
-              code: row['code']?.toString().trim() || null,
+              code: code,
               category: row['category']?.toString().trim() || null,
               subcategory: row['subcategory']?.toString().trim() || null,
               month: monthStr || null,
@@ -1067,8 +1077,16 @@ const PricingDashboard = ({ user }) => {
     e.preventDefault();
     
     // Validação de campos obrigatórios
-    if (!newPriceForm.client_id || !newPriceForm.sku || !newPriceForm.net_price || !newPriceForm.date) {
-      toast.error('Por favor, preencha todos os campos obrigatórios.');
+    if (!newPriceForm.client_id || !newPriceForm.sku || !newPriceForm.code || !newPriceForm.net_price || !newPriceForm.date) {
+      toast.error('Por favor, preencha todos os campos obrigatórios (incluindo Código Datasul).');
+      return;
+    }
+
+    // Validação de formato do code (Datasul: \d{4}\.\d{4}\.\d{4})
+    const codigoRegex = /^\d{4}\.\d{4}\.\d{4}$/;
+    const codeNormalizado = String(newPriceForm.code || '').trim();
+    if (!codigoRegex.test(codeNormalizado)) {
+      toast.error('Código Datasul inválido. Formato esperado: 0000.0000.0000');
       return;
     }
 
@@ -1091,7 +1109,7 @@ const PricingDashboard = ({ user }) => {
         margin_budget: marginBudget,
         size: newPriceForm.size?.trim() || null,
         manager: newPriceForm.manager?.trim() || null,
-        code: newPriceForm.code?.trim() || null,
+        code: codeNormalizado,
         category: newPriceForm.category?.trim() || null,
         subcategory: newPriceForm.subcategory?.trim() || null,
         month: newPriceForm.month ? (() => {
@@ -1142,11 +1160,11 @@ const PricingDashboard = ({ user }) => {
 
       if (error) throw error;
 
-      // Regra de vigência: novo preço cadastrado para o mesmo SKU/cliente vira o atual.
+      // Regra de vigência: novo preço cadastrado para o mesmo code/cliente vira o atual.
       if (!editingId && savedRowId) {
         await setCurrentPriceForSku({
           clientId: priceData.client_id,
-          sku: priceData.sku,
+          code: priceData.code,
           currentId: savedRowId
         });
       }
@@ -1613,7 +1631,7 @@ const PricingDashboard = ({ user }) => {
         .from('pricing_history')
         .select('*')
         .eq('client_id', item.client_id)
-        .eq('sku', item.sku);
+        .eq('code', item.code);
 
       if (error) throw error;
 
@@ -1622,20 +1640,20 @@ const PricingDashboard = ({ user }) => {
       if (item.isCurrent) {
         const nextCurrent = sortedRows.find(row => row.id !== item.id);
         if (!nextCurrent) {
-          toast.warning('Não é possível remover o único preço vigente deste SKU.');
+          toast.warning('Não é possível remover o único preço vigente deste código.');
           return;
         }
 
         await setCurrentPriceForSku({
           clientId: item.client_id,
-          sku: item.sku,
+          code: item.code,
           currentId: nextCurrent.id
         });
         toast.success('Preço movido para histórico com sucesso.');
       } else {
         await setCurrentPriceForSku({
           clientId: item.client_id,
-          sku: item.sku,
+          code: item.code,
           currentId: item.id
         });
         toast.success('Preço marcado como vigente com sucesso.');
