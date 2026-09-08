@@ -1908,18 +1908,18 @@ const CS = ({ user }) => {
         ) : (
           <div className="bg-white dark:bg-[#0a0a0a] rounded-lg shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
+            <table className="w-full text-xs text-left">
               <thead className="sticky top-0 z-20 text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/95 border-b border-gray-100 dark:border-gray-800">
                 <tr>
-                  <th className="px-6 py-4 font-semibold text-center w-[180px]">Status do Reajuste</th>
-                  <th className="px-6 py-4 font-semibold">Cliente</th>
-                  <th className="px-6 py-4 font-semibold">Gestor</th>
-                  <th className="px-6 py-4 font-semibold">Código</th>
-                  <th className="px-6 py-4 font-semibold">SKU</th>
-                  <th className="px-6 py-4 font-semibold text-center">Gate</th>
-                  <th className="px-6 py-4 font-semibold">Último Preço</th>
+                  <th className="px-6 py-4 font-semibold text-xs text-center w-[180px]">Status do Reajuste</th>
+                  <th className="px-6 py-4 font-semibold text-xs">Cliente</th>
+                  <th className="px-6 py-4 font-semibold text-xs">Gestor</th>
+                  <th className="px-6 py-4 font-semibold text-xs">Código</th>
+                  <th className="px-6 py-4 font-semibold text-xs min-w-[200px]">SKU</th>
+                  <th className="px-6 py-4 font-semibold text-xs text-center">Gate</th>
+                  <th className="px-6 py-4 font-semibold text-xs">Último Preço</th>
                   <th
-                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-6 py-4 font-semibold text-xs cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
                     onClick={() => requestSort('communicationDate')}
                   >
                     Próx. Comunicação
@@ -1928,7 +1928,7 @@ const CS = ({ user }) => {
                     )}
                   </th>
                   <th
-                    className="px-6 py-4 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-6 py-4 font-semibold text-xs cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
                     onClick={() => requestSort('next_validity_date')}
                   >
                     Próx. Vigência
@@ -1937,7 +1937,7 @@ const CS = ({ user }) => {
                     )}
                   </th>
                   <th 
-                    className="px-6 py-4 font-semibold text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
+                    className="px-6 py-4 font-semibold text-xs text-right cursor-pointer hover:text-gray-700 dark:hover:text-gray-200"
                     onClick={() => requestSort('readjustment_pct')}
                   >
                     % Reajuste
@@ -1945,19 +1945,19 @@ const CS = ({ user }) => {
                       <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                     )}
                   </th>
-                  <th className="px-6 py-4 font-semibold text-center w-[50px]">Ações</th>
+                  <th className="px-6 py-4 font-semibold text-xs text-center w-[50px]">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {loading ? (
                   <tr>
-                    <td colSpan="11" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="11" className="px-6 py-8 text-xs text-center text-gray-500">
                       Carregando dados...
                     </td>
                   </tr>
                 ) : filteredData.length === 0 ? (
                   <tr>
-                    <td colSpan="11" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="11" className="px-6 py-8 text-xs text-center text-gray-500">
                       Nenhum contrato encontrado.
                     </td>
                   </tr>
@@ -1968,7 +1968,7 @@ const CS = ({ user }) => {
                       onClick={() => handleRowClick(item)}
                       className="bg-white dark:bg-[#0a0a0a] hover:bg-gray-50 dark:hover:bg-gray-900/50 cursor-pointer transition-colors"
                     >
-                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={item.readjustment_status || 'Em Análise'}
                           onValueChange={(value) => handleStatusChange(item, value)}
@@ -1988,10 +1988,10 @@ const CS = ({ user }) => {
                           </SelectContent>
                         </Select>
                       </td>
-                      <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
+                      <td className="px-6 py-4 text-xs font-medium text-gray-900 dark:text-white">
                         {item.client_name}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {canManageContractFields ? (
                           <Select
                             value={item.manager || ''}
@@ -2012,13 +2012,13 @@ const CS = ({ user }) => {
                           item.manager || '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300">
                         {item.code}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300 min-w-[200px] max-w-[200px] truncate whitespace-nowrap overflow-hidden" title={item.sku}>
                         {item.sku}
                       </td>
-                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
                         {canManageContractFields ? (
                           <Select
                             value={item.gate ? item.gate.toString() : '1'}
@@ -2045,7 +2045,7 @@ const CS = ({ user }) => {
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300">
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300">
                         <div className="flex flex-col">
                           <span className="font-medium text-gray-900 dark:text-white">
                             {formatRowCurrency(item.gross_price, item.currency)}
@@ -2057,7 +2057,7 @@ const CS = ({ user }) => {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {isPricingUser ? (
                           <button
                             onClick={(e) => handleOpenDateEdit(e, item, 'communicationDate')}
@@ -2069,7 +2069,7 @@ const CS = ({ user }) => {
                           item.communicationDate ? format(new Date(item.communicationDate), 'dd/MM/yyyy') : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300" onClick={(e) => e.stopPropagation()}>
                         {isPricingUser ? (
                           <button
                             onClick={(e) => handleOpenDateEdit(e, item, 'next_validity_date')}
@@ -2081,7 +2081,7 @@ const CS = ({ user }) => {
                           item.next_validity_date ? format(new Date(item.next_validity_date), 'dd/MM/yyyy') : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-right font-medium">
+                      <td className="px-6 py-4 text-xs text-right font-medium">
                         <div className={`flex items-center justify-end gap-1 ${
                             item.readjustment_pct > 0 ? 'text-green-600 dark:text-green-400' : 
                             item.readjustment_pct < 0 ? 'text-red-600 dark:text-red-400' : 
@@ -2092,7 +2092,7 @@ const CS = ({ user }) => {
                             {item.readjustment_pct ? item.readjustment_pct.toFixed(2) : '0.00'}%
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={(e) => handleEditClick(e, item)}
