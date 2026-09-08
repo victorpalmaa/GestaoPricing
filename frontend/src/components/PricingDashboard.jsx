@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Plus, Download, Upload, TrendingUp, DollarSign, Users, Package, Settings, BarChart3, LogOut, ArrowLeft, Edit2, Trash2, Briefcase, Filter, Search, Check, ChevronsUpDown, X, Clock, ShieldCheck, AlertCircle, Tag } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ClientAliasManager from './ClientAliasManager';
 import Header from './Header';
@@ -32,6 +32,35 @@ import {
 import SearchableSelect from './SearchableSelect';
 import { calculateGate, WORKFLOW_STATUS_OPTIONS } from '../utils/pricingUtils';
 import { useRoutePermissions } from '@/lib/permissions';
+import {
+  lerArquivoPonta,
+  prepararLote,
+} from '../services/retailPriceImport';
+import {
+  resumirLote,
+  chaveCodigo,
+  chaveAlias,
+  normalizarNomeSite,
+  VINCULO_STATUS,
+} from '../utils/retailMatching';
+import {
+  calculateMarkup,
+  formatMarkup,
+  MARKUP_STATUS,
+  resolveMarkupTier,
+} from '../utils/markup';
+
+const TIER_PALETTE = {
+  alto:  { fg: '#32AB10', bg: 'rgba(50,171,16,0.12)',  border: 'rgba(50,171,16,0.45)',  bar: '#32AB10' },
+  medio: { fg: '#35BCFF', bg: 'rgba(53,188,255,0.12)', border: 'rgba(53,188,255,0.45)', bar: '#35BCFF' },
+  baixo: { fg: '#845AFA', bg: 'rgba(132,90,250,0.12)', border: 'rgba(132,90,250,0.45)', bar: '#845AFA' },
+};
+
+const COR_ROXO_PONTA = '#845AFA';
+const COR_VERDE_PRO = '#32AB10';
+const COR_ROXO_COMPLEMENTAR_BOTAO = '#974F98';
+
+const getTierColor = (tier) => TIER_PALETTE[tier] || TIER_PALETTE.medio;
 
 const PricingDashboard = ({ user }) => {
   const { canWrite } = useRoutePermissions('/pricing/dashboard');
@@ -108,11 +137,76 @@ const PricingDashboard = ({ user }) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
 
+  const [retailConferenciaAtiva, setRetailConferenciaAtiva] = useState(false);
+  const [retailLinhasPreparadas, setRetailLinhasPreparadas] = useState([]);
+  const [retailResumo, setRetailResumo] = useState(null);
+  const [retailErrosEstruturais, setRetailErrosEstruturais] = useState([]);
+  const [retailCodigosManuais, setRetailCodigosManuais] = useState({});
+  const [retailCommitando, setRetailCommitando] = useState(false);
+  const [retailConflitos, setRetailConflitos] = useState([]);
+  const [retailVerificandoConflitos, setRetailVerificandoConflitos] = useState(false);
+  const [retailSkuAliases, setRetailSkuAliases] = useState([]);
+  const [retailArquivoNome, setRetailArquivoNome] = useState(null);
+  const [retailPrecosPorSku, setRetailPrecosPorSku] = useState(new Map());
+
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
 
   const isSuper = canWrite;
   const canEdit = canWrite;
+
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDirection, setSortDirection] = useState(null);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDirection('asc');
+    }
+  };
+
+  const [retailDetailOpen, setRetailDetailOpen] = useState(false);
+  const [retailDetailSkuId, setRetailDetailSkuId] = useState(null);
+
+  const fecharRetailDetail = useCallback(() => {
+    setRetailDetailOpen(false);
+    setRetailDetailSkuId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!retailDetailOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        fecharRetailDetail();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [retailDetailOpen, fecharRetailDetail]);
+
+  const abrirRetailDetailSeOk = (item) => {
+    const info = markupPorLinha.get(item.id);
+    if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) return;
+    setRetailDetailSkuId(item.id);
+    setRetailDetailOpen(true);
+  };
+
+  const formatCurrencyLocal = (valor, currency) => {
+    try {
+      const c = currency && String(currency).trim().toUpperCase() === 'USD' ? 'USD' : 'BRL';
+      const locale = c === 'USD' ? 'en-US' : 'pt-BR';
+      return Number(valor).toLocaleString(locale, {
+        style: 'currency',
+        currency: c,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    } catch {
+      return `R$ ${Number(valor).toFixed(2)}`;
+    }
+  };
 
   const parsePricingDate = (value) => {
     if (!value) return null;
@@ -271,6 +365,29 @@ const PricingDashboard = ({ user }) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!retailConferenciaAtiva) return;
+    if (!linhasAposCorrecaoManual || linhasAposCorrecaoManual.length === 0) {
+      setRetailConflitos([]);
+      return;
+    }
+    let cancelado = false;
+    const run = async () => {
+      const { precoRows } = montarPrecoRows();
+      if (cancelado) return;
+      if (precoRows.length === 0) {
+        setRetailConflitos([]);
+        return;
+      }
+      await verificarConflitosRetail(precoRows);
+    };
+    run();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retailConferenciaAtiva, retailLinhasPreparadas, retailCodigosManuais]);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -306,6 +423,17 @@ const PricingDashboard = ({ user }) => {
       });
       
       setClientAliases(aliasStringMap);
+
+      // Carregar aliases de SKU de ponta (usados na importação de preços de ponta)
+      try {
+        const { data: retailAliasesData } = await supabase
+          .from('retail_sku_aliases')
+          .select('client_id, nome_site, datasul_code');
+        setRetailSkuAliases(retailAliasesData || []);
+      } catch (e) {
+        // Pode falhar se a migration ainda não rodou; deixar array vazio.
+        setRetailSkuAliases([]);
+      }
 
       // Carregar histórico de preços com joins e filtro de data
       let query = supabase
@@ -433,6 +561,32 @@ const PricingDashboard = ({ user }) => {
 
       setPricingData(enrichedData);
 
+      try {
+        const { data: retailPrecos, error: retailPrecosError } = await supabase
+          .from('client_retail_prices')
+          .select('client_id, datasul_code, retail_price, currency, collected_at')
+          .order('collected_at', { ascending: false });
+        if (retailPrecosError) {
+          setRetailPrecosPorSku(new Map());
+        } else {
+          const m = new Map();
+          for (const r of retailPrecos || []) {
+            if (!r.client_id || !r.datasul_code) continue;
+            const chave = `${r.client_id}|${String(r.datasul_code).trim().toUpperCase()}`;
+            if (!m.has(chave)) {
+              m.set(chave, {
+                retail_price: r.retail_price,
+                currency: r.currency,
+                collected_at: r.collected_at,
+              });
+            }
+          }
+          setRetailPrecosPorSku(m);
+        }
+      } catch (e) {
+        setRetailPrecosPorSku(new Map());
+      }
+
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
@@ -482,6 +636,106 @@ const PricingDashboard = ({ user }) => {
     
     return matchesClient && matchesSku && matchesCategory && matchesSubcategory && matchesSize && matchesDatasul && matchesDateFrom && matchesDateTo;
   });
+
+  const markupPorLinha = useMemo(() => {
+    const m = new Map();
+    for (const item of safePricingData) {
+      if (!item.id) continue;
+      const semPonta = {
+        status: MARKUP_STATUS.SEM_PONTA,
+        markup: null,
+        tier: null,
+        moeda: null,
+        detalhe: null,
+      };
+      const semPontaEntrada = {
+        resultado: semPonta,
+        ponta: null,
+        markupNumeric: null,
+        coletaData: null,
+        proMaisRecente: false,
+        linhaHistorica: !item.isCurrent,
+      };
+      if (!item.isCurrent) {
+        m.set(item.id, semPontaEntrada);
+        continue;
+      }
+      const chave = (item.client_id && item.code)
+        ? `${item.client_id}|${String(item.code).trim().toUpperCase()}`
+        : null;
+      const ponta = chave ? retailPrecosPorSku.get(chave) : undefined;
+      const precoPro = item.gross_price;
+      const moedaPro = item.currency || 'BRL';
+      const precoPonta = ponta ? ponta.retail_price : null;
+      const moedaPonta = ponta ? ponta.currency : undefined;
+      const resultado = calculateMarkup({
+        precoPro,
+        moedaPro,
+        precoPonta,
+        moedaPonta,
+      });
+      const coletaData = ponta && ponta.collected_at ? new Date(ponta.collected_at) : null;
+      const proData = item.date ? new Date(item.date) : null;
+      let proMaisRecente = false;
+      if (coletaData && proData && !Number.isNaN(coletaData.getTime()) && !Number.isNaN(proData.getTime())) {
+        proMaisRecente = proData.getTime() > coletaData.getTime();
+      }
+      m.set(item.id, {
+        resultado,
+        ponta,
+        markupNumeric: (resultado.status === MARKUP_STATUS.OK && Number.isFinite(resultado.markup)) ? resultado.markup : null,
+        coletaData,
+        proMaisRecente,
+        linhaHistorica: false,
+      });
+    }
+    return m;
+  }, [safePricingData, retailPrecosPorSku]);
+
+  const markupPorCliente = useMemo(() => {
+    const byClient = new Map();
+    for (const item of safePricingData) {
+      if (!item.isCurrent) continue;
+      const clientId = item.client_id;
+      if (!clientId) continue;
+      const info = markupPorLinha.get(item.id);
+      if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) continue;
+      if (!byClient.has(clientId)) byClient.set(clientId, []);
+      byClient.get(clientId).push({
+        id: item.id,
+        sku: item.sku,
+        code: item.code,
+        markup: info.resultado.markup,
+        tier: resolveMarkupTier(info.resultado.markup),
+      });
+    }
+    return byClient;
+  }, [safePricingData, markupPorLinha]);
+
+  const skuAtualDetail = useMemo(() => {
+    if (!retailDetailOpen || !retailDetailSkuId) return null;
+    return safePricingData.find((i) => i.id === retailDetailSkuId) || null;
+  }, [retailDetailOpen, retailDetailSkuId, safePricingData]);
+
+  const sortedData = useMemo(() => {
+    if (!sortKey || !sortDirection) return filteredData;
+    const data = [...filteredData];
+    const sinal = sortDirection === 'asc' ? 1 : -1;
+    data.sort((a, b) => {
+      if (sortKey === 'markup_ponta') {
+        const ma = markupPorLinha.get(a.id);
+        const mb = markupPorLinha.get(b.id);
+        const temA = ma && ma.markupNumeric != null;
+        const temB = mb && mb.markupNumeric != null;
+        if (!temA && !temB) return 0;
+        if (!temA) return 1;
+        if (!temB) return -1;
+        return (ma.markupNumeric - mb.markupNumeric) * sinal;
+      }
+      return 0;
+    });
+    return data;
+  }, [filteredData, sortKey, sortDirection, markupPorLinha]);
 
   const handleExportExcel = async () => {
     try {
@@ -974,6 +1228,383 @@ const PricingDashboard = ({ user }) => {
     }
   };
 
+  // ====== Importação de preços de ponta ======
+
+  const montarMapasImportacao = () => {
+    const codigosDaBase = new Set();
+    for (const item of safePricingData) {
+      if (item.client_id && item.code) {
+        codigosDaBase.add(chaveCodigo(item.client_id, item.code));
+      }
+    }
+    const aliases = new Map();
+    for (const a of retailSkuAliases) {
+      if (a.client_id && a.nome_site && a.datasul_code) {
+        aliases.set(chaveAlias(a.client_id, a.nome_site), a.datasul_code);
+      }
+    }
+    const clientesPorNome = new Map();
+    for (const c of safeClients) {
+      if (c.id && c.name) {
+        clientesPorNome.set(normalizarNomeSite(c.name), c.id);
+      }
+    }
+    return { codigosDaBase, aliases, clientesPorNome };
+  };
+
+  const skusPorCliente = useMemo(() => {
+    const m = new Map();
+    for (const item of safePricingData) {
+      if (!item.client_id || !item.code) continue;
+      if (!m.has(item.client_id)) m.set(item.client_id, new Map());
+      const inner = m.get(item.client_id);
+      if (!inner.has(item.code)) {
+        inner.set(item.code, {
+          code: item.code,
+          sku: item.sku,
+          category: item.category || '',
+          subcategory: item.subcategory || '',
+        });
+      }
+    }
+    return m;
+  }, [safePricingData]);
+
+  const linhasAposCorrecaoManual = useMemo(() => {
+    return retailLinhasPreparadas.map((linha, idx) => {
+      const manual = retailCodigosManuais[idx];
+      if (!manual) return { ...linha, _resolvidoManualmente: false };
+      const vinculoAtual = linha.vinculo;
+      if (vinculoAtual && vinculoAtual.status !== 'pendente') {
+        return { ...linha, _resolvidoManualmente: false };
+      }
+      if (linha.errosLinha && linha.errosLinha.length > 0) {
+        return { ...linha, _resolvidoManualmente: false };
+      }
+      const novoVinculo = {
+        status: VINCULO_STATUS.POR_CODIGO,
+        datasulCode: manual.trim().toUpperCase(),
+        motivo: null,
+        origem: 'manual',
+      };
+      return {
+        ...linha,
+        vinculo: novoVinculo,
+        _resolvidoManualmente: true,
+        _codigoManualOriginal: manual,
+      };
+    });
+  }, [retailLinhasPreparadas, retailCodigosManuais]);
+
+  const resumoAposCorrecao = useMemo(() => {
+    if (retailLinhasPreparadas.length === 0) return retailResumo;
+    let total = 0;
+    let porCodigo = 0;
+    let porAlias = 0;
+    let pendentes = 0;
+    let invalidos = 0;
+    let errosLinhaCount = 0;
+    for (const linha of linhasAposCorrecaoManual) {
+      const temErro = linha.errosLinha && linha.errosLinha.length > 0;
+      if (temErro) errosLinhaCount++;
+      const v = linha.vinculo;
+      const linhaValida = v && typeof v === 'object' && 'status' in v;
+      if (!linhaValida) {
+        invalidos++;
+        total++;
+        continue;
+      }
+      total++;
+      if (v.status === VINCULO_STATUS.POR_CODIGO) {
+        porCodigo++;
+      } else if (v.status === VINCULO_STATUS.POR_ALIAS) {
+        porAlias++;
+      } else if (v.status === VINCULO_STATUS.PENDENTE) {
+        if (temErro) {
+          // Linha pendente COM erro não entra em "Sem vínculo" — a categoria
+          // "Sem vínculo" só conta pendentes SEM erro (os com select resolvível).
+        } else {
+          pendentes++;
+        }
+      } else {
+        invalidos++;
+      }
+    }
+    return {
+      total,
+      porCodigo,
+      porAlias,
+      pendentes,
+      invalidos,
+      podeCommitar: total > 0 && pendentes === 0 && invalidos === 0 && errosLinhaCount === 0,
+      errosLinhaCount,
+    };
+  }, [linhasAposCorrecaoManual, retailLinhasPreparadas.length, retailResumo]);
+
+  const podeCommitarAposCorrecao = () => {
+    if (!resumoAposCorrecao) return false;
+    const temErroLinha = resumoAposCorrecao.errosLinhaCount > 0;
+    const resumo = resumoAposCorrecao;
+    const temConflito = retailConflitos && retailConflitos.length > 0;
+    if (retailVerificandoConflitos) return false;
+    return (
+      !temErroLinha &&
+      !temConflito &&
+      resumo.total > 0 &&
+      resumo.pendentes === 0 &&
+      (resumo.invalidos === 0 || resumo.invalidos == null)
+    );
+  };
+
+  const montarPrecoRows = () => {
+    const userId = user?.id || null;
+    const precoRows = [];
+    const aliasRows = [];
+    for (let idx = 0; idx < linhasAposCorrecaoManual.length; idx++) {
+      const linha = linhasAposCorrecaoManual[idx];
+      if (linha.errosLinha && linha.errosLinha.length > 0) {
+        continue;
+      }
+      const v = linha.vinculo;
+      if (!v || v.status === 'pendente') continue;
+      if (!v.datasulCode) continue;
+      if (!linha.clientId) continue;
+      if (!(linha.precoPonta != null && Number.isFinite(linha.precoPonta))) continue;
+      if (!linha.dataColeta) continue;
+      const row = {
+        client_id: linha.clientId,
+        datasul_code: String(v.datasulCode).trim().toUpperCase(),
+        nome_site: String(linha.nomeSite || '').trim(),
+        retail_price: linha.precoPonta,
+        currency: linha.moeda || 'BRL',
+        collected_at: linha.dataColeta,
+        source: linha.fonte,
+        created_by: userId,
+        _idxOriginal: idx,
+      };
+      precoRows.push(row);
+      if (linha._resolvidoManualmente) {
+        aliasRows.push({
+          client_id: linha.clientId,
+          nome_site: String(linha.nomeSite || '').trim(),
+          datasul_code: String(v.datasulCode).trim().toUpperCase(),
+          created_by: userId,
+        });
+      }
+    }
+    return { precoRows, aliasRows };
+  };
+
+  const verificarConflitosRetail = async (precoRows) => {
+    if (!precoRows || precoRows.length === 0) {
+      setRetailConflitos([]);
+      return [];
+    }
+    try {
+      setRetailVerificandoConflitos(true);
+      const clientIds = [...new Set(precoRows.map((r) => r.client_id))];
+      const datasulCodes = [...new Set(precoRows.map((r) => r.datasul_code))];
+      const collectedAts = [...new Set(precoRows.map((r) => r.collected_at))];
+      const { data, error } = await supabase
+        .from('client_retail_prices')
+        .select('client_id, datasul_code, collected_at')
+        .in('client_id', clientIds)
+        .in('datasul_code', datasulCodes)
+        .in('collected_at', collectedAts);
+      if (error) {
+        console.warn('verificarConflitosRetail: query falhou, seguindo sem pré-check', error);
+        setRetailConflitos([]);
+        return [];
+      }
+      const jaExistem = new Set(
+        (data || []).map(
+          (d) => `${d.client_id}|${String(d.datasul_code || '').trim().toUpperCase()}|${d.collected_at}`,
+        ),
+      );
+      const conflitos = [];
+      for (const r of precoRows) {
+        const chave = `${r.client_id}|${r.datasul_code}|${r.collected_at}`;
+        if (jaExistem.has(chave)) {
+          const idx = r._idxOriginal;
+          const prep = retailLinhasPreparadas[idx] || {};
+          conflitos.push({
+            linhaArquivo: prep.linhaArquivo || (idx + 2),
+            cliente: prep.clienteNome || '',
+            codigo: r.datasul_code,
+            data: r.collected_at,
+          });
+        }
+      }
+      setRetailConflitos(conflitos);
+      return conflitos;
+    } catch (e) {
+      console.warn('verificarConflitosRetail: exceção', e);
+      setRetailConflitos([]);
+      return [];
+    } finally {
+      setRetailVerificandoConflitos(false);
+    }
+  };
+
+  const abrirConferenciaRetail = () => {
+    setRetailConferenciaAtiva(true);
+    setRetailLinhasPreparadas([]);
+    setRetailResumo(null);
+    setRetailErrosEstruturais([]);
+    setRetailCodigosManuais({});
+    setRetailConflitos([]);
+    setRetailCommitando(false);
+    setRetailArquivoNome(null);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls';
+    input.style.display = 'none';
+    input.onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        await processarArquivoRetail(file);
+      }
+      document.body.removeChild(input);
+    };
+    document.body.appendChild(input);
+    setTimeout(() => input.click(), 0);
+  };
+
+  const cancelarConferenciaRetail = () => {
+    setRetailConferenciaAtiva(false);
+    setRetailLinhasPreparadas([]);
+    setRetailResumo(null);
+    setRetailErrosEstruturais([]);
+    setRetailCodigosManuais({});
+    setRetailConflitos([]);
+    setRetailCommitando(false);
+    setRetailArquivoNome(null);
+  };
+
+  const temVinculosManuaisPendentes = useMemo(() => {
+    return retailCodigosManuais && typeof retailCodigosManuais === 'object'
+      && Object.keys(retailCodigosManuais).length > 0;
+  }, [retailCodigosManuais]);
+
+  const tentarSairConferencia = useCallback(() => {
+    if (!retailConferenciaAtiva) return;
+    if (temVinculosManuaisPendentes) {
+      const ok = window.confirm(
+        'Você tem vínculos resolvidos manualmente que ainda não foram gravados. ' +
+        'Sair agora vai perdê-los.\n\nDeseja realmente sair da conferência?'
+      );
+      if (!ok) return;
+    }
+    cancelarConferenciaRetail();
+  }, [retailConferenciaAtiva, temVinculosManuaisPendentes, cancelarConferenciaRetail]);
+
+  const processarArquivoRetail = async (file) => {
+    try {
+      setRetailArquivoNome(file.name);
+      const { linhas, erros } = await lerArquivoPonta(file);
+      if (erros && erros.length > 0) {
+        setRetailLinhasPreparadas([]);
+        setRetailResumo(null);
+        setRetailErrosEstruturais(erros);
+        return;
+      }
+      setRetailErrosEstruturais([]);
+      const { codigosDaBase, aliases, clientesPorNome } = montarMapasImportacao();
+      const preparadas = prepararLote({
+        linhas,
+        codigosDaBase,
+        aliases,
+        clientesPorNome,
+      });
+      setRetailLinhasPreparadas(preparadas);
+      setRetailCodigosManuais({});
+      const resultadosVinculo = preparadas.map((l) => l.vinculo);
+      const resumoInicial = resumirLote(resultadosVinculo);
+      setRetailResumo(resumoInicial);
+      setRetailConflitos([]);
+      if (preparadas.length === 0) {
+        setRetailErrosEstruturais(['Nenhuma linha de dados foi lida do arquivo.']);
+      }
+    } catch (e) {
+      console.error(e);
+      setRetailErrosEstruturais([
+        `Erro ao processar arquivo: ${e && e.message ? e.message : String(e)}`,
+      ]);
+    }
+  };
+
+  const handleSelecionarSkuManual = (idx, novoCodigo) => {
+    setRetailCodigosManuais((prev) => {
+      const next = { ...prev };
+      if (!novoCodigo || String(novoCodigo).trim() === '') {
+        delete next[idx];
+      } else {
+        next[idx] = String(novoCodigo).trim();
+      }
+      return next;
+    });
+  };
+
+  const confirmarImportacaoRetail = async () => {
+    if (!podeCommitarAposCorrecao()) return;
+    try {
+      setRetailCommitando(true);
+      const { precoRows, aliasRows } = montarPrecoRows();
+
+      if (precoRows.length === 0) {
+        toast.error('Nenhuma linha pronta para importar.');
+        return;
+      }
+
+      const conflitosRedeSeguranca = await verificarConflitosRetail(precoRows);
+      if (conflitosRedeSeguranca && conflitosRedeSeguranca.length > 0) {
+        toast.error(
+          `Conflito de importação: ${conflitosRedeSeguranca.length} linha(s) já importada(s) para a mesma data. Corrija a planilha e reimporte.`,
+        );
+        return;
+      }
+
+      const rowsInsert = precoRows.map(({ _idxOriginal, ...rest }) => rest);
+
+      const { error: insertPrecosError, data: insertedPrecos } = await supabase
+        .from('client_retail_prices')
+        .insert(rowsInsert)
+        .select('client_id, datasul_code, collected_at');
+
+      if (insertPrecosError) {
+        console.error(insertPrecosError);
+        toast.error(
+          `Erro ao gravar preços: ${insertPrecosError.message || String(insertPrecosError)}. A importação foi cancelada; os vínculos que você resolveu foram mantidos.`,
+        );
+        return;
+      }
+
+      if (aliasRows.length > 0) {
+        const { error: insertAliasesError } = await supabase
+          .from('retail_sku_aliases')
+          .upsert(aliasRows, {
+            onConflict: 'client_id, nome_site',
+            ignoreDuplicates: false,
+          });
+        if (insertAliasesError) {
+          console.warn('Erro ao inserir aliases (preços foram gravados):', insertAliasesError);
+        }
+      }
+
+      toast.success(`Importação concluída: ${insertedPrecos ? insertedPrecos.length : precoRows.length} preço(s) gravado(s).`);
+      setRetailCommitando(false);
+      cancelarConferenciaRetail();
+      loadData();
+    } catch (e) {
+      console.error(e);
+      toast.error(
+        `Erro na importação: ${e && e.message ? e.message : String(e)}. A importação foi cancelada; os vínculos que você resolveu foram mantidos.`,
+      );
+    } finally {
+      setRetailCommitando(false);
+    }
+  };
+
   const handleToggleVigency = async (item) => {
     if (!canEdit || !item?.id) return;
 
@@ -1115,6 +1746,14 @@ const PricingDashboard = ({ user }) => {
                   <Upload size={18} />
                   Importar Excel
                 </button>
+                <button
+                  onClick={abrirConferenciaRetail}
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 text-white whitespace-nowrap"
+                  style={{ backgroundColor: COR_ROXO_COMPLEMENTAR_BOTAO }}
+                >
+                  <Briefcase size={18} />
+                  Importar preços de ponta
+                </button>
               </>
             )}
             <button
@@ -1151,6 +1790,320 @@ const PricingDashboard = ({ user }) => {
         </div>
       </div>
 
+      {/* Conferência de importação de preços de ponta */}
+      {retailConferenciaAtiva && (
+        <div className="max-w-[110rem] mx-auto px-6 py-2">
+          <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg p-6 shadow-sm transition-colors duration-200">
+            <div className="flex items-center justify-between mb-4 gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <button
+                  onClick={tentarSairConferencia}
+                  className="flex items-center justify-center w-10 h-10 rounded-lg shrink-0 transition-colors text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
+                  title="Voltar ao dashboard"
+                  type="button"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+                <div className="min-w-0">
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                    Conferência de importação de preços de ponta
+                  </h2>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    {retailArquivoNome ? `Arquivo: ${retailArquivoNome}` : 'Selecione um arquivo para começar.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={abrirConferenciaRetail}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                >
+                  <Upload size={16} />
+                  Trocar arquivo
+                </button>
+                <button
+                  onClick={tentarSairConferencia}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg font-semibold transition-colors text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                >
+                  <X size={16} />
+                  Cancelar
+                </button>
+              </div>
+            </div>
+
+            {retailErrosEstruturais && retailErrosEstruturais.length > 0 && (
+              <div className="mb-4 p-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/20">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" size={18} />
+                  <div>
+                    <p className="font-semibold text-red-800 dark:text-red-300 mb-1">
+                      Não foi possível ler o arquivo
+                    </p>
+                    <ul className="list-disc list-inside text-sm text-red-700 dark:text-red-400 space-y-1">
+                      {retailErrosEstruturais.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {resumoAposCorrecao && (
+              <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30">
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Total de linhas: </span>
+                    <span className="font-bold text-gray-900 dark:text-white text-lg">{resumoAposCorrecao.total}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Vinculadas por código: </span>
+                    <span className="font-semibold text-green-700 dark:text-green-400">{resumoAposCorrecao.porCodigo}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Vinculadas por de-para: </span>
+                    <span className="font-semibold text-blue-700 dark:text-blue-400">{resumoAposCorrecao.porAlias}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Sem vínculo: </span>
+                    <span className={`font-semibold ${resumoAposCorrecao.pendentes > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {resumoAposCorrecao.pendentes}
+                    </span>
+                  </div>
+                  {resumoAposCorrecao.errosLinhaCount > 0 && (
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Com erro de linha: </span>
+                      <span className="font-semibold text-red-700 dark:text-red-400">{resumoAposCorrecao.errosLinhaCount}</span>
+                    </div>
+                  )}
+                  {resumoAposCorrecao.invalidos > 0 && (
+                    <div className="px-3 py-1 rounded bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-800">
+                      <span className="text-red-800 dark:text-red-300 font-bold text-xs">
+                        REGISTROS INVÁLIDOS (BUG): {resumoAposCorrecao.invalidos}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {retailConflitos && retailConflitos.length > 0 && (
+              <div className="mb-4 p-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/20">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" size={18} />
+                  <div className="flex-1">
+                    <p className="font-semibold text-red-800 dark:text-red-300 mb-1">
+                      Já existem preços gravados para as chaves abaixo. Remova essas linhas da planilha ou use outra data de coleta.
+                    </p>
+                    <div className="overflow-x-auto mt-2">
+                      <table className="min-w-[400px] text-sm">
+                        <thead>
+                          <tr>
+                            <th className="px-3 py-1 text-left text-red-700 dark:text-red-400 font-semibold">Linha</th>
+                            <th className="px-3 py-1 text-left text-red-700 dark:text-red-400 font-semibold">Cliente</th>
+                            <th className="px-3 py-1 text-left text-red-700 dark:text-red-400 font-semibold">Código</th>
+                            <th className="px-3 py-1 text-left text-red-700 dark:text-red-400 font-semibold">Data coleta</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {retailConflitos.map((c, i) => (
+                            <tr key={i} className="border-t border-red-200 dark:border-red-900">
+                              <td className="px-3 py-1 text-red-800 dark:text-red-300">{c.linhaArquivo}</td>
+                              <td className="px-3 py-1 text-red-800 dark:text-red-300">{c.cliente}</td>
+                              <td className="px-3 py-1 text-red-800 dark:text-red-300 font-mono">{c.codigo}</td>
+                              <td className="px-3 py-1 text-red-800 dark:text-red-300">{c.data}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {linhasAposCorrecaoManual.length > 0 && (
+              <div className="overflow-auto max-h-[62vh] border border-gray-200 dark:border-gray-800 rounded-lg">
+                <table className="w-full min-w-[1100px] text-sm">
+                  <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-20">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Linha
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Cliente
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[280px]">
+                        Nome no site
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Código
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Preço de ponta
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Data
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[280px]">
+                        Situação
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-[#0a0a0a] divide-y divide-gray-200 dark:divide-gray-800">
+                    {linhasAposCorrecaoManual.map((linha, idx) => {
+                      const temErroLinha = linha.errosLinha && linha.errosLinha.length > 0;
+                      const v = linha.vinculo || {};
+                      const rowClass = temErroLinha
+                        ? 'bg-red-50 dark:bg-red-900/10'
+                        : v.status === 'pendente'
+                        ? 'bg-amber-50 dark:bg-amber-900/10'
+                        : '';
+                      const skuOptions = linha.clientId ? (skusPorCliente.get(linha.clientId) || new Map()) : new Map();
+                      const skuOptionsList = Array.from(skuOptions.values());
+                      return (
+                        <tr key={idx} className={rowClass}>
+                          <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-700 dark:text-gray-300 align-top">
+                            {linha.linhaArquivo}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
+                            {linha.clienteNome || <span className="text-gray-400">-</span>}
+                          </td>
+                          <td className="px-3 py-2 text-gray-800 dark:text-gray-200 align-top">
+                            <div className="max-w-md break-words">
+                              {linha.nomeSite || <span className="text-gray-400">-</span>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 font-mono align-top">
+                            {linha.datasulCodeInformado || <span className="text-gray-400">-</span>}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
+                            {linha.precoPonta != null ? (
+                              <span>
+                                {linha.moeda === 'USD' ? '$' : 'R$'} {Number(linha.precoPonta).toFixed(2)}
+                                <span className="text-gray-400 text-xs ml-2">{linha.moeda}</span>
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
+                            {linha.dataColeta || <span className="text-gray-400">-</span>}
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            {temErroLinha ? (
+                              <div className="space-y-1">
+                                <Badge className="bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-900 whitespace-nowrap">
+                                  Erro na linha · corrija a planilha
+                                </Badge>
+                                <ul className="list-disc list-inside text-xs text-red-700 dark:text-red-400 space-y-0.5 mt-1 pl-1">
+                                  {linha.errosLinha.map((e, i2) => (
+                                    <li key={i2}>{e}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : v.status === VINCULO_STATUS.POR_CODIGO ? (
+                              <div className="space-y-1">
+                                <Badge className="bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-900 whitespace-nowrap">
+                                  <Check size={12} className="mr-1 inline" />
+                                  {v.origem === 'manual' ? 'Vinculado manualmente' : 'Vinculado por código'}
+                                </Badge>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  Código: <span className="font-mono">{v.datasulCode}</span>
+                                </div>
+                              </div>
+                            ) : v.status === VINCULO_STATUS.POR_ALIAS ? (
+                              <div className="space-y-1">
+                                <Badge className="bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-900 whitespace-nowrap">
+                                  <ShieldCheck size={12} className="mr-1 inline" />
+                                  Por de-para (alias)
+                                </Badge>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  Código: <span className="font-mono">{v.datasulCode}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <Badge className="bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-900 whitespace-nowrap">
+                                  <Clock size={12} className="mr-1 inline" />
+                                  Sem vínculo · resolva abaixo
+                                </Badge>
+                                {v.motivo && (
+                                  <div className="text-xs text-amber-700 dark:text-amber-400">
+                                    Motivo: {String(v.motivo)}
+                                  </div>
+                                )}
+                                {linha.clientId ? (
+                                  skuOptionsList.length === 0 ? (
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                                      Nenhum SKU encontrado na base para este cliente.
+                                    </div>
+                                  ) : (
+                                    <select
+                                      value={retailCodigosManuais[idx] || ''}
+                                      onChange={(e) => handleSelecionarSkuManual(idx, e.target.value)}
+                                      className="w-full px-2 py-1.5 text-sm border border-amber-300 dark:border-amber-700 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                                    >
+                                      <option value="">-- Escolha o SKU correspondente --</option>
+                                      {skuOptionsList.map((s) => (
+                                        <option key={s.code} value={s.code}>
+                                          [{s.code}] {s.sku}
+                                          {s.category ? ` · ${s.category}` : ''}
+                                          {s.subcategory ? ` / ${s.subcategory}` : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )
+                                ) : (
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    Cliente não identificado — não é possível selecionar um SKU.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {(resumoAposCorrecao || (retailErrosEstruturais && retailErrosEstruturais.length > 0)) && (
+              <div className="mt-6 flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-800 pt-4">
+                <button
+                  onClick={tentarSairConferencia}
+                  className="px-4 py-2 rounded-lg font-semibold transition-colors transition-transform hover:scale-105 active:scale-95 bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmarImportacaoRetail}
+                  disabled={!podeCommitarAposCorrecao() || retailCommitando}
+                  className="flex items-center gap-2 px-5 py-2 rounded-lg font-semibold transition-colors transition-transform disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 disabled:hover:scale-100 text-white"
+                  style={{ backgroundColor: 'var(--color-success)' }}
+                >
+                  {retailCommitando ? (
+                    <>
+                      <Clock size={16} className="animate-spin" />
+                      Gravando…
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} />
+                      Confirmar importação
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!retailConferenciaAtiva && (
+        <>
         {/* Cards de Resumo */}
         <div className="max-w-[110rem] mx-auto px-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
@@ -1335,7 +2288,7 @@ const PricingDashboard = ({ user }) => {
         <div className="max-w-[110rem] mx-auto px-6">
           <div className="bg-white dark:bg-[#0a0a0a] dark:border-gray-800 rounded-lg shadow-sm overflow-hidden transition-colors duration-200">
             <div className="overflow-auto h-[calc(100vh-250px)]">
-              <table className="w-full min-w-[2000px]">
+              <table className="w-full min-w-[2150px]">
                 <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-40 shadow-sm">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider sticky left-0 z-50 bg-gray-50 dark:bg-gray-800 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
@@ -1383,6 +2336,12 @@ const PricingDashboard = ({ user }) => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Subcategoria
                     </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none" onClick={() => toggleSort('markup_ponta')}>
+                      <div className="flex items-center justify-end gap-1">
+                        Markup ponta
+                        {sortKey === 'markup_ponta' && <ChevronsUpDown size={14} />}
+                      </div>
+                    </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Info
                     </th>
@@ -1394,19 +2353,26 @@ const PricingDashboard = ({ user }) => {
                 <tbody className="bg-white dark:bg-[#0a0a0a] divide-y divide-gray-200 dark:divide-gray-800">
                   {loading ? (
                     <tr>
-                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                      <td colSpan="18" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
                         Carregando...
                       </td>
                     </tr>
                   ) : filteredData.length === 0 ? (
                     <tr>
-                      <td colSpan="13" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                      <td colSpan="18" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
                         Nenhum dado encontrado
                       </td>
                     </tr>
                   ) : (
-                    filteredData.map((item) => (
-                      <tr key={item.id} className="group hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
+                    sortedData.map((item) => {
+                      const info = markupPorLinha.get(item.id);
+                      const statusOk = info && info.resultado && info.resultado.status === MARKUP_STATUS.OK;
+                      return (
+                      <tr
+                        key={item.id}
+                        className={`group hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors ${statusOk ? 'cursor-pointer' : ''}`}
+                        onClick={() => abrirRetailDetailSeOk(item)}
+                      >
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sticky left-0 z-30 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50 dark:group-hover:bg-gray-900 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                           {item.clients?.name}
                         </td>
@@ -1480,6 +2446,118 @@ const PricingDashboard = ({ user }) => {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                           {item.subcategory || '-'}
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <TooltipProvider>
+                            {(() => {
+                              const info = markupPorLinha.get(item.id);
+                              const r = info && info.resultado;
+                              if (!r) {
+                                return <span className="text-gray-400">—</span>;
+                              }
+                              if (r.status === MARKUP_STATUS.OK) {
+                                const tier = resolveMarkupTier(r.markup);
+                                const formatted = formatMarkup(r.markup);
+                                const pal = getTierColor(tier);
+                                const bg = pal.bg;
+                                const fg = pal.fg;
+                                return (
+                                  <div className="flex flex-col items-end gap-1">
+                                    <span
+                                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold"
+                                      style={{ backgroundColor: bg, color: fg }}
+                                    >
+                                      {formatted}
+                                    </span>
+                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span
+                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
+                                          >
+                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
+                                          </span>
+                                        </TooltipTrigger>
+                                        {info.proMaisRecente ? (
+                                          <TooltipContent>
+                                            <p>Preço PRO mais recente que a coleta de ponta</p>
+                                          </TooltipContent>
+                                        ) : null}
+                                      </Tooltip>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+                              if (r.status === MARKUP_STATUS.SEM_PONTA) {
+                                return <span className="text-gray-400">—</span>;
+                              }
+                              if (r.status === MARKUP_STATUS.MOEDA_DIVERGENTE) {
+                                return (
+                                  <div className="flex flex-col items-end gap-1">
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="inline-flex items-center justify-end text-amber-600 dark:text-amber-400 cursor-help">
+                                          <AlertCircle size={18} />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Moeda do preço PRO difere da moeda de ponta</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span
+                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
+                                          >
+                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
+                                          </span>
+                                        </TooltipTrigger>
+                                        {info.proMaisRecente ? (
+                                          <TooltipContent><p>Preço PRO mais recente que a coleta de ponta</p></TooltipContent>
+                                        ) : null}
+                                      </Tooltip>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+                              if (
+                                r.status === MARKUP_STATUS.MOEDA_INVALIDA ||
+                                r.status === MARKUP_STATUS.PONTA_INVALIDA ||
+                                r.status === MARKUP_STATUS.PRO_INVALIDO
+                              ) {
+                                return (
+                                  <div className="flex flex-col items-end gap-1">
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="inline-flex items-center justify-end text-red-600 dark:text-red-400 cursor-help">
+                                          <AlertCircle size={18} />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Não foi possível calcular o markup</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span
+                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
+                                          >
+                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
+                                          </span>
+                                        </TooltipTrigger>
+                                        {info.proMaisRecente ? (
+                                          <TooltipContent><p>Preço PRO mais recente que a coleta de ponta</p></TooltipContent>
+                                        ) : null}
+                                      </Tooltip>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+                              return <span className="text-gray-400">—</span>;
+                            })()}
+                          </TooltipProvider>
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           <TooltipProvider>
                             <Tooltip>
@@ -1528,13 +2606,307 @@ const PricingDashboard = ({ user }) => {
                           </div>
                         </td>
                       </tr>
-                    ))
+                    );})
                   )}
                 </tbody>
               </table>
             </div>
           </div>
         </div>
+        </>
+      )}
+
+        {/* Modal de Detalhe de Preço de Ponta */}
+        {retailDetailOpen && skuAtualDetail && (() => {
+          const info = markupPorLinha.get(skuAtualDetail.id);
+          if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) return null;
+          const resultado = info.resultado;
+          const ponta = info.ponta;
+          const precoPro = Number(skuAtualDetail.gross_price);
+          const moedaPro = skuAtualDetail.currency || 'BRL';
+          const precoPonta = ponta && Number.isFinite(Number(ponta.retail_price)) ? Number(ponta.retail_price) : null;
+          const moedaPonta = ponta ? ponta.currency || 'BRL' : 'BRL';
+          const dataColeta = ponta ? ponta.collected_at : null;
+          const fonte = ponta ? ponta.source : null;
+
+          const tier = resultado.tier;
+          const pal = getTierColor(tier);
+          const pillBg = pal.bg;
+          const pillFg = pal.fg;
+
+          const razao = (precoPro != null && precoPonta && Number.isFinite(precoPonta) && precoPonta > 0)
+            ? precoPro / precoPonta : 0;
+          const larguraProPct = Math.max(6, razao * 100);
+
+          let spreadAbsoluto = null;
+          if (precoPonta != null && precoPro != null && Number.isFinite(precoPonta) && Number.isFinite(precoPro)) {
+            spreadAbsoluto = precoPonta - precoPro;
+          }
+          const participacaoProPct = (precoPro != null && precoPonta && Number.isFinite(precoPonta) && precoPonta > 0)
+            ? (precoPro / precoPonta) * 100 : null;
+
+          const clientId = skuAtualDetail.client_id;
+          const skusDoCliente = clientId ? (markupPorCliente.get(clientId) || []) : [];
+          const mostrarListaCliente = skusDoCliente.length > 1;
+          let mediaMarkupCliente = null;
+          let qtdSkusComColeta = 0;
+          if (mostrarListaCliente) {
+            let soma = 0;
+            let n = 0;
+            for (const s of skusDoCliente) {
+              if (Number.isFinite(s.markup) && s.markup > 0) {
+                soma += s.markup;
+                n += 1;
+              }
+            }
+            qtdSkusComColeta = n;
+            if (n > 0) mediaMarkupCliente = soma / n;
+          }
+
+          return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+            onClick={fecharRetailDetail}
+          >
+            <div
+              className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col border border-gray-200 dark:border-gray-800 overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="rounded-full p-2 shrink-0" style={{ backgroundColor: pillBg }}>
+                      <Tag className="w-5 h-5" style={{ color: pillFg }} />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white truncate">
+                        Preço de ponta · {skuAtualDetail.sku || 'SKU sem nome'}
+                      </h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                        {skuAtualDetail.clients?.name || 'Cliente não identificado'} · código {skuAtualDetail.code || '-'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={fecharRetailDetail}
+                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors shrink-0"
+                  >
+                    <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Conteúdo com scroll */}
+              <div className="flex-1 overflow-auto p-6 space-y-6">
+                {/* Três cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                      Preço PRO (bruto)
+                    </p>
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">
+                      {formatCurrencyLocal(precoPro, moedaPro)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                      Preço de ponta
+                    </p>
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">
+                      {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : '-'}
+                    </p>
+                  </div>
+                  <div
+                    className="rounded-lg border p-4"
+                    style={{
+                      borderColor: pal.border,
+                      borderWidth: '2px',
+                      backgroundColor: pillBg,
+                    }}
+                  >
+                    <p
+                      className="text-xs font-medium uppercase tracking-wider mb-2"
+                      style={{ color: pillFg }}
+                    >
+                      Markup
+                    </p>
+                    <p className="text-2xl font-extrabold" style={{ color: pillFg }}>
+                      {formatMarkup(resultado.markup)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Comparativo barras */}
+                <div className="space-y-3 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                      <span>Preço ponta</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">
+                        {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : '-'}
+                      </span>
+                    </div>
+                    <div className="w-full h-6 rounded-md overflow-hidden bg-gray-100 dark:bg-gray-800">
+                      <div
+                        className="h-full flex items-center px-3 text-xs font-semibold text-white whitespace-nowrap"
+                        style={{
+                          width: '100%',
+                          backgroundColor: COR_ROXO_PONTA,
+                        }}
+                      >
+                        {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                      <span>Preço PRO</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">
+                        {formatCurrencyLocal(precoPro, moedaPro)}
+                      </span>
+                    </div>
+                    <div className="w-full h-6 rounded-md overflow-hidden bg-gray-100 dark:bg-gray-800">
+                      <div
+                        className="h-full flex items-center px-3 text-xs font-semibold text-white whitespace-nowrap"
+                        style={{
+                          width: `${larguraProPct}%`,
+                          minWidth: '6%',
+                          backgroundColor: COR_VERDE_PRO,
+                        }}
+                      >
+                        {formatCurrencyLocal(precoPro, moedaPro)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Linha de contexto */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                      Spread absoluto na cadeia
+                    </p>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">
+                      {spreadAbsoluto != null ? formatCurrencyLocal(spreadAbsoluto, moedaPonta || moedaPro) : '-'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                      Participação PRO no preço final
+                    </p>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">
+                      {participacaoProPct != null
+                        ? `${participacaoProPct.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+                        : '-'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Markup por SKU do cliente */}
+                {mostrarListaCliente && (
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                        Markup por SKU do cliente
+                      </h4>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        Média dos SKUs com coleta:{' '}
+                        <span className="font-bold text-gray-900 dark:text-white">
+                          {formatMarkup(mediaMarkupCliente) || '-'}
+                        </span>
+                        {' · '}
+                        <span className="font-medium">{qtdSkusComColeta}</span>
+                        {' '}SKU{qtdSkusComColeta === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      {skusDoCliente
+                        .slice()
+                        .sort((a, b) => (b.markup || 0) - (a.markup || 0))
+                        .map((s) => {
+                          const isAberto = s.id === skuAtualDetail.id;
+                          const sp = getTierColor(s.tier);
+                          const barBg = sp.bg;
+                          const barFg = sp.fg;
+                          const largBarra = Math.min(100, ((s.markup || 0) / 8) * 100);
+                          return (
+                            <div
+                              key={s.id}
+                              className={`rounded-md p-3 border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/30 ${isAberto ? 'ring-1 ring-offset-1 ring-[#845AFA]/60' : 'opacity-70'}`}
+                            >
+                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                <div className="flex items-baseline gap-2 min-w-0">
+                                  <span className={`text-sm font-semibold truncate ${isAberto ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300'}`}>
+                                    {s.sku || 'SKU sem nome'}
+                                  </span>
+                                  <span className="text-[11px] text-gray-400 shrink-0">
+                                    {s.code || ''}
+                                  </span>
+                                </div>
+                                <span
+                                  className="text-sm font-bold shrink-0"
+                                  style={{ color: barFg }}
+                                >
+                                  {formatMarkup(s.markup)}
+                                </span>
+                              </div>
+                              <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: barBg }}>
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${largBarra}%`,
+                                    backgroundColor: barFg,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Rodapé do conteúdo */}
+              <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 rounded-b-xl">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <div className="space-y-0.5">
+                    <p className="text-gray-500 dark:text-gray-400">
+                      Data da coleta
+                      <span className="ml-1 font-medium text-gray-700 dark:text-gray-200">
+                        {dataColeta && !Number.isNaN(new Date(dataColeta).getTime())
+                          ? format(new Date(dataColeta), 'dd/MM/yyyy', { locale: ptBR })
+                          : '-'}
+                      </span>
+                      {info.proMaisRecente && (
+                        <span
+                          className="ml-2 font-semibold inline-flex items-center gap-1"
+                          style={{ color: '#B45309' }}
+                          title="Preço PRO mais recente que a coleta de ponta"
+                        >
+                          <AlertCircle size={12} />
+                          Preço PRO mais recente que a coleta de ponta
+                        </span>
+                      )}
+                    </p>
+                    {fonte && (
+                      <p className="text-gray-500 dark:text-gray-400">
+                        Fonte: <span className="font-medium text-gray-700 dark:text-gray-200">{fonte}</span>
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={fecharRetailDetail}
+                    className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shrink-0"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
 
         {/* Modal de Novo Preço */}
         {showNewPriceModal && (
