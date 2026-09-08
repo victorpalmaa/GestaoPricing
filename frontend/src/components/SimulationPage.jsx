@@ -28,7 +28,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
 import { logImport } from '@/utils/activityLog';
-import { parseVbaVersaoLabel, reconcileVbaCatalogRow } from '@/utils/catalogImportReconciliation';
+import { parseVbaVersaoLabel, reconcileVbaCatalogRow, parseExcelDate, parsePercent } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 import {
   Popover,
@@ -552,10 +552,17 @@ const SimulationPage = ({ user }) => {
 
     if (!file || !isPricingUser) return;
 
+    let invalidRows = 0;
+    let duplicatedRows = 0;
+    let reconciledRows = 0;
+    let importErrorDetails = [];
+    let warningRows = 0;
+    let unrecognizedDataVersaoRows = 0;
+
     try {
       setImportingMinimumRules(true);
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
@@ -629,15 +636,16 @@ const SimulationPage = ({ user }) => {
       ];
 
       const payloadByVersionAndVolume = new Map();
-      let invalidRows = 0;
-      let duplicatedRows = 0;
-      let reconciledRows = 0;
-      let importErrorDetails = [];
-      let warningRows = 0;
+      invalidRows = 0;
+      duplicatedRows = 0;
+      reconciledRows = 0;
+      importErrorDetails = [];
+      warningRows = 0;
+      unrecognizedDataVersaoRows = 0;
 
       rows.forEach((row, idx) => {
         const versaoRaw = getValueByAliases(row, aliases.versao);
-        const margem = parseSpreadsheetNumber(getValueByAliases(row, aliases.margem));
+        const margem = parsePercent(getValueByAliases(row, aliases.margem));
         const precobruto = parseSpreadsheetNumber(getValueByAliases(row, aliases.precobruto));
         const volume = parseSpreadsheetNumber(getValueByAliases(row, aliases.volume));
         const custoTotalRaw = getValueByAliases(row, aliases.custoTotal);
@@ -662,11 +670,16 @@ const SimulationPage = ({ user }) => {
           );
         }
 
-        if (!versaoFinal || !Number.isFinite(volume) || (margem === null && precobruto === null)) {
+        if (!versaoFinal || !Number.isFinite(volume) || margem === null || precobruto === null) {
           invalidRows += 1;
           if (importErrorDetails.length < 10) {
+            const motivos = [];
+            if (!versaoFinal) motivos.push('versao ausente');
+            if (!Number.isFinite(volume)) motivos.push('volume invalido');
+            if (margem === null) motivos.push('margem invalida');
+            if (precobruto === null) motivos.push('precobruto invalido');
             importErrorDetails.push(
-              `Linha ${idx + 2} | versao "${String(versaoRaw).trim()}" | vol ${volume} | campos obrigatórios ausentes`
+              `Linha ${idx + 2} | versao "${String(versaoRaw).trim()}" | vol ${volume} | ${motivos.join(', ') || 'campos obrigatorios ausentes'}`
             );
           }
           return;
@@ -758,29 +771,11 @@ const SimulationPage = ({ user }) => {
             vbaPayload.id_versao_vba = String(idVersaoVbaRaw).trim();
           }
           if (hasSpreadsheetValue(dataVersaoVbaRaw)) {
-            const rawDate = dataVersaoVbaRaw;
-            let dataValida = null;
-            try {
-              if (rawDate instanceof Date && !Number.isNaN(rawDate.getTime())) {
-                dataValida = rawDate.toISOString().slice(0, 10);
-              } else {
-                const str = String(rawDate).trim();
-                if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-                  const d = new Date(str + 'T00:00:00');
-                  if (!Number.isNaN(d.getTime())) dataValida = str;
-                } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
-                  const [d, m, y] = str.split('/');
-                  const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
-                  if (!Number.isNaN(dateObj.getTime())) {
-                    dataValida = dateObj.toISOString().slice(0, 10);
-                  }
-                }
-              }
-            } catch (_) {
-              dataValida = null;
-            }
-            if (dataValida !== null) {
-              vbaPayload.data_versao_vba = dataValida;
+            const parsedDate = parseExcelDate(dataVersaoVbaRaw);
+            if (parsedDate) {
+              vbaPayload.data_versao_vba = parsedDate.toISOString();
+            } else {
+              unrecognizedDataVersaoRows += 1;
             }
           }
         }
@@ -842,6 +837,7 @@ const SimulationPage = ({ user }) => {
       if (duplicatedRows > 0) detailsParts.push(`${duplicatedRows} duplicada(s)`);
       if (warningRows > 0) detailsParts.push(`${warningRows} c/ aviso(s)`);
       if (reconciledRows > 0) detailsParts.push(`${reconciledRows} reconcil. VBA`);
+      if (unrecognizedDataVersaoRows > 0) detailsParts.push(`${unrecognizedDataVersaoRows} com data versão não reconhecida`);
       const details = detailsParts.join(', ');
       const message = `${sucessoCount} importado(s): ${details}.`;
 
@@ -856,6 +852,7 @@ const SimulationPage = ({ user }) => {
             linhas_duplicadas: duplicatedRows,
             linhas_com_warnings: warningRows,
             linhas_reconciliadas_vba: reconciledRows,
+            linhas_data_versao_nao_reconhecida: unrecognizedDataVersaoRows,
             erros_amostra: importErrorDetails,
           }
         );
@@ -863,6 +860,23 @@ const SimulationPage = ({ user }) => {
 
       toast.success(message);
     } catch (error) {
+      try {
+        await logImport(
+          'simulation_minimum_price_rules',
+          0,
+          {
+            inseridos: 0,
+            atualizados: 0,
+            linhas_invalidas: invalidRows || 0,
+            linhas_duplicadas: duplicatedRows || 0,
+            linhas_com_warnings: warningRows || 0,
+            linhas_reconciliadas_vba: reconciledRows || 0,
+            linhas_data_versao_nao_reconhecida: unrecognizedDataVersaoRows || 0,
+            erros_amostra: importErrorDetails || [],
+            erro_fatal: error ? (error.message || String(error).slice(0, 200)) : null,
+          }
+        );
+      } catch (_) { /* não bloquear */ }
       console.error('Erro ao importar minimos:', error);
       toast.error(
         isPermissionError(error)

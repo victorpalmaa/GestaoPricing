@@ -3,6 +3,106 @@ const toFiniteNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+export const parseExcelDate = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(Date.UTC(
+      value.getUTCFullYear(),
+      value.getUTCMonth(),
+      value.getUTCDate(),
+      value.getUTCHours(),
+      value.getUTCMinutes(),
+      value.getUTCSeconds(),
+      value.getUTCMilliseconds(),
+    ));
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const epochMs = Math.round((value - 25569) * 86400000);
+    const temp = new Date(epochMs);
+    if (Number.isNaN(temp.getTime())) return null;
+    return new Date(Date.UTC(
+      temp.getUTCFullYear(),
+      temp.getUTCMonth(),
+      temp.getUTCDate(),
+    ));
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  let match;
+
+  match = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const d = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  match = raw.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})$/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const year = Number(match[3]);
+    const d = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  match = raw.match(/^(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{2})$/);
+  if (match) {
+    const mm = Number(match[1]);
+    const dd = Number(match[2]);
+    const yyShort = Number(match[3]);
+    const year = yyShort >= 50 ? 1900 + yyShort : 2000 + yyShort;
+    const month = mm - 1;
+    const day = dd;
+    const d = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
+};
+
+export const parsePercent = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  let normalized = String(value)
+    .replace(/[R$\s]/g, '')
+    .trim();
+
+  if (!normalized) return null;
+
+  const hasPercentSuffix = normalized.endsWith('%');
+  if (hasPercentSuffix) {
+    normalized = normalized.slice(0, -1).trim();
+  }
+
+  if (normalized.includes(',') && normalized.includes('.')) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (normalized.includes(',')) {
+    normalized = normalized.replace(',', '.');
+  }
+
+  const numeric = Number(normalized);
+  if (Number.isNaN(numeric)) return null;
+
+  return hasPercentSuffix ? numeric / 100 : numeric;
+};
+
 const isWithinTolerance = (left, right, tolerance) => (
   Math.abs(left - right) <= tolerance
 );

@@ -47,13 +47,13 @@ import {
 } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
 import { logExport, logImport } from '@/utils/activityLog';
-import { parseVbaVersaoLabel, reconcileVbaCatalogRow } from '@/utils/catalogImportReconciliation';
+import { parseVbaVersaoLabel, reconcileVbaCatalogRow, parseExcelDate, parsePercent } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
-const DEFAULT_CATEGORIES = ['Pó', 'Gel', 'Goma', 'Softgel'];
-const EXPIRY_DATE_TEXT = '31/08/2026';
-const EXPIRY_DATE = new Date(2026, 7, 31);
+const DEFAULT_CATEGORIES = ['Pó', 'Gel', 'Goma', 'Softgel', 'Cápsula'];
+const EXPIRY_DATE_TEXT = '30/11/2026';
+const EXPIRY_DATE = new Date(2026, 10, 30);
 const BRAZIL_VBA_NUMERIC_ALIAS_KEYS = [
   'custoMp',
   'custoEmb',
@@ -216,6 +216,8 @@ const normalizeText = (value) =>
     .trim()
     .toLowerCase();
 
+const normalizeHeader = (value) => normalizeText(value).replace(/\s+/g, '');
+
 const parseNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isNaN(value) ? null : value;
@@ -349,23 +351,21 @@ const CatalogoPro = ({ user }) => {
   const validityAlert = useMemo(() => {
     const daysUntilExpiry = getDaysUntilExpiry();
 
-    if (daysUntilExpiry > 30) return null;
-
-    if (daysUntilExpiry > 0) {
+    if (daysUntilExpiry > 30) {
       return {
-        title: 'Validade dos preços próxima do vencimento',
-        description: `Faltam ${daysUntilExpiry} dia(s) para o vencimento dos preços em ${EXPIRY_DATE_TEXT}.`,
-        className: 'border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20',
-        iconClassName: 'text-amber-600 dark:text-amber-400',
+        title: 'Preços vigentes',
+        description: `Os preços deste catálogo são válidos até ${EXPIRY_DATE_TEXT}.`,
+        className: 'border-blue-200 bg-blue-50 dark:border-blue-900/40 dark:bg-blue-950/20',
+        iconClassName: 'text-blue-600 dark:text-blue-400',
       };
     }
 
-    if (daysUntilExpiry === 0) {
+    if (daysUntilExpiry > 0) {
       return {
-        title: 'Validade dos preços vence hoje',
-        description: `Os preços vencem hoje (${EXPIRY_DATE_TEXT}). Para atualização, acesse o time de Data. O catálogo continua disponível para consulta.`,
-        className: 'border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20',
-        iconClassName: 'text-red-600 dark:text-red-400',
+        title: 'Validade dos preços se aproxima',
+        description: `Os preços deste catálogo são válidos até ${EXPIRY_DATE_TEXT}.`,
+        className: 'border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20',
+        iconClassName: 'text-amber-600 dark:text-amber-400',
       };
     }
 
@@ -551,7 +551,7 @@ const CatalogoPro = ({ user }) => {
     try {
       setImporting(true);
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
@@ -561,7 +561,6 @@ const CatalogoPro = ({ user }) => {
         return;
       }
 
-      const normalizeHeader = (header) => normalizeText(header).replace(/\s+/g, ' ');
       const getValueByHeader = (row, candidates) => {
         const headers = Object.keys(row || {});
         const match = headers.find((header) => {
@@ -620,6 +619,7 @@ const CatalogoPro = ({ user }) => {
       let replacedByIdCount = 0;
       let updatedBySkuVolumeCount = 0;
       let insertedCount = 0;
+      let unrecognizedDataVersaoRows = 0;
       const replacedByIdDetails = [];
       const importErrorDetails = [];
       const importWarningDetails = [];
@@ -638,7 +638,7 @@ const CatalogoPro = ({ user }) => {
         const category = String(categoryRaw || '').trim();
         const volume = Number(parseNumber(volumeRaw));
         const catalogCost = parseNumber(costRaw);
-        const catalogMargin = parseNumber(marginRaw);
+        const catalogMargin = parsePercent(marginRaw);
         const primaryPrice = parseNumber(primaryPriceRaw);
         const secondaryPrice = parseNumber(secondaryPriceRaw);
         const isBrazilImport = selectedCatalogConfig.key === 'brazil';
@@ -674,9 +674,7 @@ const CatalogoPro = ({ user }) => {
         } else if (hasSpreadsheetValue(versaoRaw)) {
           const parsed = parseVbaVersaoLabel(versaoRaw, volume);
           sku = parsed.skuLimpo;
-          if (parsed.volumeExtraido === null) {
-            rowWarnings.push(`versão sem sufixo (NK): ${String(versaoRaw).trim()}`);
-          } else if (parsed.bateComVolume === false) {
+          if (parsed.volumeExtraido !== null && parsed.bateComVolume === false) {
             volumeWarning = 'divergencia_volume_versao';
             rowWarnings.push(
               `versão/volume divergentes: versão ${formatVolume(parsed.volumeExtraido)} vs coluna ${formatVolume(volume)}`
@@ -689,8 +687,23 @@ const CatalogoPro = ({ user }) => {
         if (!catalogId || !sku || !category || !VOLUMES.includes(volume)) {
           errorCount += 1;
           if (importErrorDetails.length < 10) {
+            const motivos = [];
+            if (!catalogId) motivos.push('ID ausente');
+            if (!sku) motivos.push('SKU ausente');
+            if (!category) motivos.push('Categoria ausente');
+            if (!VOLUMES.includes(volume)) motivos.push('Volume inválido');
             importErrorDetails.push(
-              `ID ${catalogId || 'sem ID'} | SKU ${sku || 'sem SKU'} | Vol ${formatVolume(volumeRaw)} | campos obrigatórios inválidos`
+              `ID ${catalogId || 'sem ID'} | SKU ${sku || 'sem SKU'} | Vol ${formatVolume(volumeRaw)} | ${motivos.join(', ') || 'campos obrigatórios inválidos'}`
+            );
+          }
+          continue;
+        }
+
+        if (!DEFAULT_CATEGORIES.includes(category)) {
+          errorCount += 1;
+          if (importErrorDetails.length < 10) {
+            importErrorDetails.push(
+              `ID ${catalogId || 'sem ID'} | SKU ${sku || 'sem SKU'} | Vol ${formatVolume(volumeRaw)} | Categoria inválida: "${category}" (aceitas: ${DEFAULT_CATEGORIES.join(', ')})`
             );
           }
           continue;
@@ -780,7 +793,12 @@ const CatalogoPro = ({ user }) => {
           }
 
           if (hasSpreadsheetValue(dataVersaoVbaRaw)) {
-            vbaPayload.data_versao_vba = parseSpreadsheetDateValue(dataVersaoVbaRaw);
+            const parsedDate = parseExcelDate(dataVersaoVbaRaw);
+            if (parsedDate) {
+              vbaPayload.data_versao_vba = parsedDate.toISOString();
+            } else {
+              unrecognizedDataVersaoRows += 1;
+            }
           }
         }
 
@@ -821,6 +839,11 @@ const CatalogoPro = ({ user }) => {
         if (error) {
           console.error('Erro no upsert do catálogo:', error, payload);
           errorCount += 1;
+          if (importErrorDetails.length < 10) {
+            importErrorDetails.push(
+              `ID ${catalogId} | SKU ${sku} | Vol ${formatVolume(volume)} | erro no banco: ${error.message || String(error).slice(0, 120)}`
+            );
+          }
           continue;
         }
 
@@ -852,43 +875,55 @@ const CatalogoPro = ({ user }) => {
       setSelectedImportFile(null);
 
       if (successCount > 0) {
-        const details = [
+        const detailsParts = [
           `${insertedCount} novo(s)`,
           `${updatedBySkuVolumeCount} atualizado(s) por SKU/volume`,
           `${replacedByIdCount} substituído(s) por ID existente`,
-        ].join(', ');
-        const message = `${successCount} processado(s): ${details}${warningCount > 0 ? `, ${warningCount} aviso(s)` : ''}${errorCount > 0 ? `, ${errorCount} erro(s)` : ''}. Detalhes no log de atividades.`;
+        ];
+        if (warningCount > 0) detailsParts.push(`${warningCount} aviso(s)`);
+        if (errorCount > 0) detailsParts.push(`${errorCount} erro(s)`);
+        if (unrecognizedDataVersaoRows > 0) detailsParts.push(`${unrecognizedDataVersaoRows} com data de versão não reconhecida`);
+        const details = detailsParts.join(', ');
+        const message = `${successCount} processado(s): ${details}. Detalhes no log de atividades.`;
 
         if (selectedCatalogConfig.key === 'brazil') {
-          logImport(
-            'catalog_br_prices',
-            successCount,
-            {
-              inseridos: insertedCount,
-              atualizados: updatedBySkuVolumeCount,
-              substituidos: replacedByIdCount,
-              avisos: [...importWarningDetails],
-              erros: [...importErrorDetails],
-            }
-          );
+          try {
+            await logImport(
+              'catalog_br_prices',
+              successCount,
+              {
+                inseridos: insertedCount,
+                atualizados: updatedBySkuVolumeCount,
+                substituidos: replacedByIdCount,
+                linhas_data_versao_nao_reconhecida: unrecognizedDataVersaoRows,
+                avisos: [...importWarningDetails],
+                erros: [...importErrorDetails],
+              }
+            );
+          } catch (_) { /* não bloquear */ }
         }
 
         toast.success(message);
       } else {
-        const message = `Nenhuma linha importada. ${errorCount} erro(s) encontrados. Detalhes no log de atividades.`;
+        const errorParts = [`${errorCount} erro(s) encontrados`];
+        if (unrecognizedDataVersaoRows > 0) errorParts.push(`${unrecognizedDataVersaoRows} com data de versão não reconhecida`);
+        const message = `Nenhuma linha importada. ${errorParts.join(', ')}. Detalhes no log de atividades.`;
 
-        if (selectedCatalogConfig.key === 'brazil' && errorCount > 0) {
-          logImport(
-            'catalog_br_prices',
-            0,
-            {
-              inseridos: 0,
-              atualizados: 0,
-              substituidos: 0,
-              avisos: [...importWarningDetails],
-              erros: [...importErrorDetails],
-            }
-          );
+        if (selectedCatalogConfig.key === 'brazil' && (errorCount > 0 || unrecognizedDataVersaoRows > 0)) {
+          try {
+            await logImport(
+              'catalog_br_prices',
+              0,
+              {
+                inseridos: 0,
+                atualizados: 0,
+                substituidos: 0,
+                linhas_data_versao_nao_reconhecida: unrecognizedDataVersaoRows,
+                avisos: [...importWarningDetails],
+                erros: [...importErrorDetails],
+              }
+            );
+          } catch (_) { /* não bloquear */ }
         }
 
         toast.error(message);

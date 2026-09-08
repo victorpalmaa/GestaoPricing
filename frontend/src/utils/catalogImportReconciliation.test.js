@@ -1,6 +1,8 @@
 import {
   parseVbaVersaoLabel,
   reconcileVbaCatalogRow,
+  parseExcelDate,
+  parsePercent,
 } from './catalogImportReconciliation';
 
 describe('catalogImportReconciliation', () => {
@@ -27,6 +29,166 @@ describe('catalogImportReconciliation', () => {
         volumeExtraido: 3000,
         bateComVolume: false,
       });
+    });
+  });
+
+  describe('parseExcelDate', () => {
+    it('converte serial 46234 do Excel para 2026-07-31 (valor real confirmado no XLSX)', () => {
+      const result = parseExcelDate(46234);
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(6);
+      expect(result.getUTCDate()).toBe(31);
+    });
+
+    it('converte serial 46244 do Excel para 2026-08-10', () => {
+      const result = parseExcelDate(46244);
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(7);
+      expect(result.getUTCDate()).toBe(10);
+    });
+
+    it('converte serial 46265 do Excel para 2026-08-31 (valor do serial verificado em runtime)', () => {
+      const result = parseExcelDate(46265);
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(7);
+      expect(result.getUTCDate()).toBe(31);
+    });
+
+    it('converte serial 46268 do Excel para 2026-09-03 (3 dias após 46265)', () => {
+      const result = parseExcelDate(46268);
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('retorna null para string vazia sem lançar erro', () => {
+      expect(() => parseExcelDate('')).not.toThrow();
+      expect(parseExcelDate('')).toBe(null);
+    });
+
+    it('retorna null para valor inválido sem lançar erro', () => {
+      expect(() => parseExcelDate('xyz')).not.toThrow();
+      expect(parseExcelDate('xyz')).toBe(null);
+    });
+
+    it('retorna null para null e undefined sem lançar erro', () => {
+      expect(() => parseExcelDate(null)).not.toThrow();
+      expect(parseExcelDate(null)).toBe(null);
+      expect(() => parseExcelDate(undefined)).not.toThrow();
+      expect(parseExcelDate(undefined)).toBe(null);
+    });
+
+    it('retorna Date com componentes UTC iguais quando recebe Date válido', () => {
+      const input = new Date(Date.UTC(2026, 7, 10, 12, 30, 45, 123));
+      const result = parseExcelDate(input);
+      expect(result).toBeInstanceOf(Date);
+      expect(result).not.toBe(input);
+      expect(result.getUTCFullYear()).toBe(input.getUTCFullYear());
+      expect(result.getUTCMonth()).toBe(input.getUTCMonth());
+      expect(result.getUTCDate()).toBe(input.getUTCDate());
+      expect(result.getUTCHours()).toBe(input.getUTCHours());
+      expect(result.getUTCMinutes()).toBe(input.getUTCMinutes());
+      expect(result.getUTCSeconds()).toBe(input.getUTCSeconds());
+      expect(result.getUTCMilliseconds()).toBe(input.getUTCMilliseconds());
+    });
+
+    it('retorna null para Date inválido', () => {
+      const result = parseExcelDate(new Date('invalid'));
+      expect(result).toBe(null);
+    });
+
+    it('parseia string ISO "2026-09-03" -> 03/09/2026 em UTC', () => {
+      const result = parseExcelDate('2026-09-03');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('parseia string ISO "2026-08-10" -> 10/08/2026 em UTC', () => {
+      const result = parseExcelDate('2026-08-10');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(7);
+      expect(result.getUTCDate()).toBe(10);
+    });
+
+    it('parseia string "03/09/2026" (dd/mm/yyyy) -> 03/09/2026 em UTC', () => {
+      const result = parseExcelDate('03/09/2026');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('parseia string "09-03-26" (mm-dd-yy, originária do number_format Excel) -> 03/09/2026 em UTC', () => {
+      const result = parseExcelDate('09-03-26');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('parseia string "09.03.26" (separador ponto, mm-dd-yy) -> 03/09/2026 em UTC', () => {
+      const result = parseExcelDate('09.03.26');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(2026);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('ano curto >= 50 vira século XX (09-03-99 -> 03/09/1999)', () => {
+      const result = parseExcelDate('09-03-99');
+      expect(result).toBeInstanceOf(Date);
+      expect(result.getUTCFullYear()).toBe(1999);
+      expect(result.getUTCMonth()).toBe(8);
+      expect(result.getUTCDate()).toBe(3);
+    });
+
+    it('rejeita formato ambíguo não mapeado ("3 de set de 2026") retornando null', () => {
+      expect(parseExcelDate('3 de set de 2026')).toBe(null);
+    });
+  });
+
+  describe('parsePercent', () => {
+    it('converte " 25,00% " para 0.25 (espaços + vírgula + %)', () => {
+      expect(parsePercent(' 25,00% ')).toBe(0.25);
+    });
+
+    it('converte "52%" para 0.52', () => {
+      expect(parsePercent('52%')).toBe(0.52);
+    });
+
+    it('converte "25.00%" para 0.25', () => {
+      expect(parsePercent('25.00%')).toBe(0.25);
+    });
+
+    it('retorna 0.25 inalterado quando recebe number 0.25 (leitura bruta decimal)', () => {
+      expect(parsePercent(0.25)).toBe(0.25);
+    });
+
+    it('converte "0,25" para 0.25 (SEM %, vírgula decimal)', () => {
+      expect(parsePercent('0,25')).toBe(0.25);
+    });
+
+    it('retorna null para string vazia', () => {
+      expect(parsePercent('')).toBe(null);
+    });
+
+    it('retorna null para valor inválido "abc"', () => {
+      expect(parsePercent('abc')).toBe(null);
+    });
+
+    it('retorna null para null', () => {
+      expect(parsePercent(null)).toBe(null);
+    });
+
+    it('"25" SEM % retorna 25 (NÃO divide por 100 — regra estrita)', () => {
+      expect(parsePercent('25')).toBe(25);
     });
   });
 
