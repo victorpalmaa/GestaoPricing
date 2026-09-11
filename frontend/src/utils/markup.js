@@ -1,8 +1,8 @@
 export const MOEDA_PADRAO = 'BRL';
 
 export const MARKUP_TIERS = [
-  { min: 5.0, tier: 'alto' },
-  { min: 4.0, tier: 'medio' },
+  { min: 4.1, tier: 'alto'  },
+  { min: 2.6, tier: 'medio' },
   { min: 0.0, tier: 'baixo' },
 ];
 

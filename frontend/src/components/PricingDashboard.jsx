@@ -667,7 +667,7 @@ const PricingDashboard = ({ user }) => {
       const precoPro = item.gross_price;
       const moedaPro = item.currency || 'BRL';
       const precoPonta = ponta ? ponta.retail_price : null;
-      const moedaPonta = ponta ? ponta.currency : undefined;
+      const moedaPonta = ponta ? ponta.currency || 'BRL' : 'BRL';
       const resultado = calculateMarkup({
         precoPro,
         moedaPro,

@@ -15,8 +15,8 @@ describe('markup', () => {
 
     it('MARKUP_TIERS está ordenado do maior para o menor', () => {
       expect(MARKUP_TIERS).toEqual([
-        { min: 5.0, tier: 'alto' },
-        { min: 4.0, tier: 'medio' },
+        { min: 4.1, tier: 'alto'  },
+        { min: 2.6, tier: 'medio' },
         { min: 0.0, tier: 'baixo' },
       ]);
     });
@@ -236,16 +236,32 @@ describe('markup', () => {
       expect(resolveMarkupTier(5.0)).toBe('alto');
     });
 
-    it('4.99 → medio', () => {
-      expect(resolveMarkupTier(4.99)).toBe('medio');
+    it('4.99 → alto', () => {
+      expect(resolveMarkupTier(4.99)).toBe('alto');
     });
 
-    it('4.0 → medio', () => {
-      expect(resolveMarkupTier(4.0)).toBe('medio');
+    it('4.10 → alto', () => {
+      expect(resolveMarkupTier(4.10)).toBe('alto');
     });
 
-    it('3.99 → baixo', () => {
-      expect(resolveMarkupTier(3.99)).toBe('baixo');
+    it('4.00 → medio', () => {
+      expect(resolveMarkupTier(4.00)).toBe('medio');
+    });
+
+    it('3.99 → medio', () => {
+      expect(resolveMarkupTier(3.99)).toBe('medio');
+    });
+
+    it('2.60 → medio', () => {
+      expect(resolveMarkupTier(2.60)).toBe('medio');
+    });
+
+    it('2.50 → baixo', () => {
+      expect(resolveMarkupTier(2.50)).toBe('baixo');
+    });
+
+    it('0.5 → baixo', () => {
+      expect(resolveMarkupTier(0.5)).toBe('baixo');
     });
 
     it('0 → null', () => {
@@ -256,16 +272,16 @@ describe('markup', () => {
       expect(resolveMarkupTier(-1)).toBeNull();
     });
 
+    it('-0.01 → null', () => {
+      expect(resolveMarkupTier(-0.01)).toBeNull();
+    });
+
     it('null → null', () => {
       expect(resolveMarkupTier(null)).toBeNull();
     });
 
     it('"abc" → null', () => {
       expect(resolveMarkupTier('abc')).toBeNull();
-    });
-
-    it('0.5 → baixo', () => {
-      expect(resolveMarkupTier(0.5)).toBe('baixo');
     });
   });
 
