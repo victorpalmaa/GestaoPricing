@@ -256,22 +256,16 @@ const PricingDashboard = ({ user }) => {
     return String(b.id).localeCompare(String(a.id));
   };
 
+  // Vigência é movida de forma atômica pelo RPC public.mover_vigencia.
+  // Ver supabase/migrations/20260912_mover_vigencia.sql
   const setCurrentPriceForSku = async ({ clientId, code, currentId }) => {
-    const { error: clearError } = await supabase
-      .from('pricing_history')
-      .update({ is_current: false })
-      .eq('client_id', clientId)
-      .eq('code', code)
-      .neq('id', currentId);
+    const { error } = await supabase.rpc('mover_vigencia', {
+      p_client_id: clientId,
+      p_code: code,
+      p_row_id: currentId
+    });
 
-    if (clearError) throw clearError;
-
-    const { error: setError } = await supabase
-      .from('pricing_history')
-      .update({ is_current: true })
-      .eq('id', currentId);
-
-    if (setError) throw setError;
+    if (error) throw error;
   };
 
   const safePricingData = pricingData || [];
@@ -1662,7 +1656,7 @@ const PricingDashboard = ({ user }) => {
       loadData();
     } catch (error) {
       console.error('Erro ao alternar vigência:', error);
-      toast.error('Erro ao alternar vigência.');
+      toast.error(error?.message || 'Erro ao alternar vigência.');
     }
   };
 
