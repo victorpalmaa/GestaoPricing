@@ -22,10 +22,9 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ReferenceLine,
-  Cell
+  ReferenceLine
 } from 'recharts';
-import { format, subMonths } from 'date-fns';
+import { format, subMonths, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Percent, DollarSign, Activity } from 'lucide-react';
@@ -91,7 +90,7 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
 
       const formattedData = (historyData || []).map(item => ({
         ...item,
-        dateFormatted: format(new Date(item.date), 'MMM/yy', { locale: ptBR }),
+        dateFormatted: format(parseISO(item.date), 'MMM/yy', { locale: ptBR }),
         gross_price: parseNumericValue(item.gross_price),
         net_price: parseNumericValue(item.net_price),
         margin_budget: parseNumericValue(item.margin_budget)
@@ -111,20 +110,21 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
     const currentRow = data.find(row => Boolean(row.is_current));
     const hasCurrent = Boolean(currentRow);
 
-    // Price Variation (12 months or all data) — variação histórica continua usando última data
-    const sortedByDate = [...data].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const latestByDate = sortedByDate[sortedByDate.length - 1];
+    // Price Variation (12 months or all data) — ancorado na linha vigente (is_current)
+    const sortedByDate = [...data].sort((a, b) => parseISO(a.date) - parseISO(b.date));
 
-    let priceVariation = 0;
-    if (sortedByDate.length >= 2) {
-      const oneYearAgo = subMonths(new Date(latestByDate.date), 12);
-      let comparisonPoint = sortedByDate.find(d => new Date(d.date) >= oneYearAgo) || sortedByDate[0];
+    let priceVariation = null;
+    if (hasCurrent) {
+      const currentDate = parseISO(currentRow.date);
+      const oneYearAgo = subMonths(currentDate, 12);
+      const eligibleForComparison = sortedByDate.filter(d => parseISO(d.date) <= currentDate);
+      let comparisonPoint = eligibleForComparison.find(d => parseISO(d.date) >= oneYearAgo) || eligibleForComparison[0];
 
-      if (comparisonPoint === latestByDate && sortedByDate.length > 1) {
-        comparisonPoint = sortedByDate[0];
+      if (comparisonPoint === currentRow && eligibleForComparison.length > 1) {
+        comparisonPoint = eligibleForComparison[0];
       }
 
-      const latestGross = Number(latestByDate.gross_price);
+      const latestGross = Number(currentRow.gross_price);
       const comparisonGross = Number(comparisonPoint.gross_price);
       priceVariation = comparisonGross > 0 ? ((latestGross - comparisonGross) / comparisonGross) * 100 : 0;
     }
@@ -225,11 +225,15 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
                     </div>
                     <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
                         <p className="text-sm text-gray-500 dark:text-gray-400">Variação de Preço (12m)</p>
-                        {stats && (
+                        {stats && stats.hasCurrent && stats.priceVariation !== null ? (
                             <div className={`flex items-center gap-2 mt-1 font-bold text-lg ${stats.priceVariation >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 {stats.priceVariation >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
                                 {Math.abs(stats.priceVariation).toFixed(1)}%
                             </div>
+                        ) : (
+                            <h4 className="text-lg font-bold text-orange-600 dark:text-orange-400 mt-1">
+                                sem preço vigente
+                            </h4>
                         )}
                     </div>
                     <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
@@ -298,39 +302,17 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
                     yAxisId="left"
                     dataKey="gross_price"
                     name="Preço Bruto"
-                    fill={COLORS[4]} // Purple/Sober
+                    fill={COLORS[4]}
                     radius={[4, 4, 0, 0]}
                     barSize={40}
-                    >
-                    {data.map((entry, index) => (
-                        <Cell
-                            key={`bar-cell-${index}`}
-                            fill={Boolean(entry.is_current) ? '#EF4444' : COLORS[4]}
-                        />
-                    ))}
-                    </Bar>
+                    />
                     <Line
                     yAxisId="right"
                     type="monotone"
                     dataKey="margin_budget"
                     name="Margem Orçada"
-                    stroke={COLORS[1]} // Green/Vibrant
+                    stroke={COLORS[1]}
                     strokeWidth={3}
-                    dot={(props) => {
-                        const { cx, cy, stroke, payload, value } = props;
-                        if (value === null || value === undefined) return null;
-                        const isCurrent = Boolean(payload?.is_current);
-                        return (
-                            <circle
-                                cx={cx}
-                                cy={cy}
-                                r={isCurrent ? 7 : 4}
-                                stroke={isCurrent ? '#EF4444' : stroke}
-                                strokeWidth={isCurrent ? 3 : 2}
-                                fill="#fff"
-                            />
-                        );
-                    }}
                     activeDot={{ r: 6 }}
                     />
                      {stats && (
@@ -341,24 +323,6 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
                             strokeDasharray="3 3" 
                             label={{ value: 'Média', position: 'right', fill: '#F59E0B', fontSize: 12 }} 
                         />
-                     )}
-                     {stats && stats.hasCurrent && (
-                        data.filter(d => Boolean(d.is_current)).map((d, idx) => (
-                            <ReferenceLine
-                                key={`current-ref-${idx}`}
-                                x={d.dateFormatted}
-                                stroke="#EF4444"
-                                strokeDasharray="5 5"
-                                strokeWidth={2}
-                                label={{
-                                    value: 'Vigente',
-                                    position: 'top',
-                                    fill: '#EF4444',
-                                    fontSize: 12,
-                                    fontWeight: 'bold'
-                                }}
-                            />
-                        ))
                      )}
                 </ComposedChart>
                 </ResponsiveContainer>
