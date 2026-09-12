@@ -208,6 +208,9 @@ const PricingDashboard = ({ user }) => {
     }
   };
 
+  const toLocalISODate = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
   const parsePricingDate = (value) => {
     if (!value) return null;
     const raw = value instanceof Date ? value.toISOString() : value.toString();
@@ -1023,7 +1026,7 @@ const PricingDashboard = ({ user }) => {
               category: row['category']?.toString().trim() || null,
               subcategory: row['subcategory']?.toString().trim() || null,
               month: monthStr || null,
-              date: date.toISOString().split('T')[0],
+              date: toLocalISODate(date),
               obs: row['obs']?.toString().trim() || null,
               currency: currency,
               gate: calculateGate(date.getMonth()),
@@ -1039,16 +1042,54 @@ const PricingDashboard = ({ user }) => {
           }
 
           // Inserir dados no banco
-          const { error } = await supabase
+          const { data: insertedRows, error } = await supabase
             .from('pricing_history')
-            .insert(processedData);
+            .insert(processedData)
+            .select('id, client_id, code, date');
 
           if (error) throw error;
 
+          // Regra de vigência: por (client_id, code), a linha de date mais
+          // recente do lote vira a vigente. Se a planilha trouxer mais de um
+          // preço para o mesmo par, só a mais nova é marcada.
+          const maisRecentePorPar = new Map();
+
+          for (const row of insertedRows || []) {
+            const chave = `${row.client_id}|${row.code}`;
+            const atual = maisRecentePorPar.get(chave);
+            if (!atual || String(row.date) > String(atual.date)) {
+              maisRecentePorPar.set(chave, row);
+            }
+          }
+
+          let vigenciasMovidas = 0;
+          const errosVigencia = [];
+
+          for (const row of maisRecentePorPar.values()) {
+            try {
+              await setCurrentPriceForSku({
+                clientId: row.client_id,
+                code: row.code,
+                currentId: row.id
+              });
+              vigenciasMovidas++;
+            } catch (e) {
+              errosVigencia.push(`${row.code}: ${e?.message || String(e)}`);
+            }
+          }
+
+          if (errosVigencia.length > 0) {
+            console.error('Erros ao mover vigência:', errosVigencia);
+            toast.error(
+              `${errosVigencia.length} vigência(s) não foram movidas. Verifique o console e corrija manualmente.`,
+              { duration: 10000 }
+            );
+          }
+
           if (errorCount > 0) {
-             toast.success(`Importação parcial: ${successCount} registros importados, ${errorCount} ignorados.`);
+             toast.success(`Importação parcial: ${successCount} registros importados, ${errorCount} ignorados, ${vigenciasMovidas} vigência(s) movida(s).`);
           } else {
-             toast.success(`Importação realizada com sucesso! ${successCount} registros importados.`);
+             toast.success(`Importação realizada com sucesso! ${successCount} registros importados, ${vigenciasMovidas} vigência(s) movida(s).`);
           }
           
           setShowImportModal(false);
