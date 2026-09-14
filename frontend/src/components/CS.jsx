@@ -1912,11 +1912,11 @@ const CS = ({ user }) => {
             <table className="w-full text-xs text-left">
               <thead className="sticky top-0 z-20 text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/95 border-b border-gray-100 dark:border-gray-800">
                 <tr>
-                  <th className="px-6 py-4 font-semibold text-xs text-center w-[180px]">Status do Reajuste</th>
+                  <th className="px-2 py-4 font-semibold text-xs text-center w-[130px]">Status do Reajuste</th>
                   <th className="px-6 py-4 font-semibold text-xs">Cliente</th>
                   <th className="px-6 py-4 font-semibold text-xs">Gestor</th>
                   <th className="px-6 py-4 font-semibold text-xs">Código</th>
-                  <th className="px-6 py-4 font-semibold text-xs min-w-[200px]">SKU</th>
+                  <th className="px-6 py-4 font-semibold text-xs min-w-[280px]">SKU</th>
                   <th className="px-6 py-4 font-semibold text-xs text-center">Gate</th>
                   <th className="px-6 py-4 font-semibold text-xs">Último Preço</th>
                   <th
@@ -1969,12 +1969,12 @@ const CS = ({ user }) => {
                       onClick={() => handleRowClick(item)}
                       className="bg-white dark:bg-[#0a0a0a] hover:bg-gray-50 dark:hover:bg-gray-900/50 cursor-pointer transition-colors"
                     >
-                      <td className="px-6 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-2 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={item.readjustment_status || 'Em Análise'}
                           onValueChange={(value) => handleStatusChange(item, value)}
                         >
-                          <SelectTrigger className={`w-[160px] h-8 text-xs font-medium border-0 focus:ring-0 focus:ring-offset-0 ${WORKFLOW_STATUS_OPTIONS.find(opt => opt.value === (item.readjustment_status || 'Em Análise'))?.color || 'bg-gray-100 text-gray-700'}`}>
+                          <SelectTrigger className={`w-full h-8 text-xs font-medium border-0 focus:ring-0 focus:ring-offset-0 px-2 ${WORKFLOW_STATUS_OPTIONS.find(opt => opt.value === (item.readjustment_status || 'Em Análise'))?.color || 'bg-gray-100 text-gray-700'}`}>
                             <SelectValue placeholder="Status" />
                           </SelectTrigger>
                           <SelectContent>
@@ -2016,7 +2016,7 @@ const CS = ({ user }) => {
                       <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300">
                         {item.code}
                       </td>
-                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300 min-w-[200px] max-w-[200px] truncate whitespace-nowrap overflow-hidden" title={item.sku}>
+                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-gray-300 min-w-[280px] max-w-[320px] truncate whitespace-nowrap overflow-hidden" title={item.sku}>
                         {item.sku}
                       </td>
                       <td className="px-6 py-4 text-xs text-center" onClick={(e) => e.stopPropagation()}>
