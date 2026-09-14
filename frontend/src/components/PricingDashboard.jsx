@@ -1148,8 +1148,10 @@ const PricingDashboard = ({ user }) => {
         category: newPriceForm.category?.trim() || null,
         subcategory: newPriceForm.subcategory?.trim() || null,
         month: newPriceForm.month ? (() => {
-          const [y, m, d] = newPriceForm.month.split('-');
-          return format(new Date(y, m - 1, d), 'MMM/yy', { locale: ptBR });
+          // O input é type="month" (YYYY-MM). O .slice tolera valores antigos
+          // em YYYY-MM-DD vindos de handleEdit. O dia nunca entra no month.
+          const [y, m] = newPriceForm.month.split('-').map(Number);
+          return format(new Date(y, m - 1, 1), 'MMM/yy', { locale: ptBR });
         })() : null,
         date: newPriceForm.date,
         obs: newPriceForm.obs?.trim() || null,
@@ -3101,8 +3103,8 @@ const PricingDashboard = ({ user }) => {
                         Mês
                       </label>
                       <input
-                        type="date"
-                        value={newPriceForm.month}
+                        type="month"
+                        value={(newPriceForm.month || '').slice(0, 7)}
                         onChange={(e) => handleNewPriceChange('month', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                       />
