@@ -124,9 +124,16 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
         comparisonPoint = eligibleForComparison[0];
       }
 
-      const latestGross = Number(currentRow.gross_price);
-      const comparisonGross = Number(comparisonPoint.gross_price);
-      priceVariation = comparisonGross > 0 ? ((latestGross - comparisonGross) / comparisonGross) * 100 : 0;
+      // Sem ponto de comparação distinto da linha vigente (ex.: SKU com uma
+      // única linha), a variação não existe. Fica null e a UI exibe
+      // "sem base de comparação" — 0,0% seria falso.
+      if (comparisonPoint && comparisonPoint !== currentRow) {
+        const latestGross = Number(currentRow.gross_price);
+        const comparisonGross = Number(comparisonPoint.gross_price);
+        priceVariation = comparisonGross > 0
+          ? ((latestGross - comparisonGross) / comparisonGross) * 100
+          : null;
+      }
     }
 
     // Average Margin
@@ -232,7 +239,7 @@ const HistoryChartModal = ({ isOpen, onClose, sku, code, clientId, clientName, r
                             </div>
                         ) : (
                             <h4 className="text-lg font-bold text-orange-600 dark:text-orange-400 mt-1">
-                                sem preço vigente
+                                {stats && stats.hasCurrent ? 'sem base de comparação' : 'sem preço vigente'}
                             </h4>
                         )}
                     </div>
