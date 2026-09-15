@@ -9,7 +9,7 @@ import SimulationPage from "./components/SimulationPage";
 import PreVendas from "./components/PreVendas";
 import CS from "./components/CS";
 import CatalogoPro from "./components/CatalogoPro";
-import CombosFeiras from "./components/CombosFeiras";
+import Combos2026 from "./components/Combos2026";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
 import { RequireAuth, RequireArea } from "./components/RouteGuards";
@@ -104,14 +104,18 @@ function AppRoutes() {
           )}
         />
         <Route
-          path="/combos-feiras-2026"
+          path="/combos-2026"
           element={(
             <RequireAuth>
-              <RequireArea areas={getAllowedAreasForRoute("/combos-feiras-2026")}>
-                <CombosFeiras user={user} />
+              <RequireArea areas={getAllowedAreasForRoute("/combos-2026")}>
+                <Combos2026 user={user} />
               </RequireArea>
             </RequireAuth>
           )}
+        />
+        <Route
+          path="/combos-feiras-2026"
+          element={<Navigate to="/combos-2026" replace />}
         />
         {/* Backwards compatibility or redirects */}
         <Route

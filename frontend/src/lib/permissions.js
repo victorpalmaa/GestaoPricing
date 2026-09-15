@@ -26,6 +26,10 @@ export const ROUTE_PERMISSIONS = {
     allowedAreas: ["Pricing", "Pré-vendas", "CS"],
     writeAreas: ["Pricing"],
   },
+  "/combos-2026": {
+    allowedAreas: ["Pricing", "Pré-vendas", "CS"],
+    writeAreas: ["Pricing"],
+  },
   "/combos-feiras-2026": {
     allowedAreas: ["Pricing", "Pré-vendas", "CS"],
     writeAreas: ["Pricing", "Pré-vendas", "CS"],

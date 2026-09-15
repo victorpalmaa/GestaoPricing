@@ -15,7 +15,7 @@ const SessionSelect = ({ user }) => {
     { key: 'cs', title: 'Business Dev', icon: Users, to: '/business-development' },
     { key: 'simulacao', title: 'Simulador de Preços', icon: Calculator, to: '/simulacao' },
     { key: 'catalogo-pro', title: 'Catálogo PRO', icon: BookOpen, to: '/catalogo-pro' },
-    { key: 'combos-feiras', title: 'Combos 2026', icon: Tags, to: '/combos-feiras-2026' },
+    { key: 'combos-feiras', title: 'Combos 2026', icon: Tags, to: '/combos-2026' },
   ];
   
   const subtitleFor = (key) => {
