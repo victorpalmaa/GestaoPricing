@@ -37,7 +37,6 @@ import {
   prepararLote,
 } from '../services/retailPriceImport';
 import {
-  resumirLote,
   chaveCodigo,
   chaveAlias,
   normalizarNomeSite,
@@ -137,16 +136,19 @@ const PricingDashboard = ({ user }) => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
 
+  const RETAIL_PARSE_STATE_INITIAL = Object.freeze({
+    linhasPreparadas: [],
+    errosEstruturais: [],
+    arquivoNome: null,
+  });
+
   const [retailConferenciaAtiva, setRetailConferenciaAtiva] = useState(false);
-  const [retailLinhasPreparadas, setRetailLinhasPreparadas] = useState([]);
-  const [retailResumo, setRetailResumo] = useState(null);
-  const [retailErrosEstruturais, setRetailErrosEstruturais] = useState([]);
+  const [retailParseState, setRetailParseState] = useState(RETAIL_PARSE_STATE_INITIAL);
   const [retailCodigosManuais, setRetailCodigosManuais] = useState({});
   const [retailCommitando, setRetailCommitando] = useState(false);
   const [retailConflitos, setRetailConflitos] = useState([]);
   const [retailVerificandoConflitos, setRetailVerificandoConflitos] = useState(false);
   const [retailSkuAliases, setRetailSkuAliases] = useState([]);
-  const [retailArquivoNome, setRetailArquivoNome] = useState(null);
   const [retailPrecosPorSku, setRetailPrecosPorSku] = useState(new Map());
 
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
@@ -383,7 +385,7 @@ const PricingDashboard = ({ user }) => {
       cancelado = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [retailConferenciaAtiva, retailLinhasPreparadas, retailCodigosManuais]);
+  }, [retailConferenciaAtiva, retailParseState.linhasPreparadas, retailCodigosManuais]);
 
   const loadData = async () => {
     try {
@@ -1326,7 +1328,7 @@ const PricingDashboard = ({ user }) => {
   }, [safePricingData]);
 
   const linhasAposCorrecaoManual = useMemo(() => {
-    return retailLinhasPreparadas.map((linha, idx) => {
+    return retailParseState.linhasPreparadas.map((linha, idx) => {
       const manual = retailCodigosManuais[idx];
       if (!manual) return { ...linha, _resolvidoManualmente: false };
       const vinculoAtual = linha.vinculo;
@@ -1349,10 +1351,10 @@ const PricingDashboard = ({ user }) => {
         _codigoManualOriginal: manual,
       };
     });
-  }, [retailLinhasPreparadas, retailCodigosManuais]);
+  }, [retailParseState.linhasPreparadas, retailCodigosManuais]);
 
   const resumoAposCorrecao = useMemo(() => {
-    if (retailLinhasPreparadas.length === 0) return retailResumo;
+    if (retailParseState.linhasPreparadas.length === 0) return null;
     let total = 0;
     let porCodigo = 0;
     let porAlias = 0;
@@ -1376,8 +1378,6 @@ const PricingDashboard = ({ user }) => {
         porAlias++;
       } else if (v.status === VINCULO_STATUS.PENDENTE) {
         if (temErro) {
-          // Linha pendente COM erro não entra em "Sem vínculo" — a categoria
-          // "Sem vínculo" só conta pendentes SEM erro (os com select resolvível).
         } else {
           pendentes++;
         }
@@ -1394,7 +1394,7 @@ const PricingDashboard = ({ user }) => {
       podeCommitar: total > 0 && pendentes === 0 && invalidos === 0 && errosLinhaCount === 0,
       errosLinhaCount,
     };
-  }, [linhasAposCorrecaoManual, retailLinhasPreparadas.length, retailResumo]);
+  }, [linhasAposCorrecaoManual, retailParseState.linhasPreparadas.length]);
 
   const podeCommitarAposCorrecao = () => {
     if (!resumoAposCorrecao) return false;
@@ -1481,7 +1481,7 @@ const PricingDashboard = ({ user }) => {
         const chave = `${r.client_id}|${r.datasul_code}|${r.collected_at}`;
         if (jaExistem.has(chave)) {
           const idx = r._idxOriginal;
-          const prep = retailLinhasPreparadas[idx] || {};
+          const prep = retailParseState.linhasPreparadas[idx] || {};
           conflitos.push({
             linhaArquivo: prep.linhaArquivo || (idx + 2),
             cliente: prep.clienteNome || '',
@@ -1503,13 +1503,10 @@ const PricingDashboard = ({ user }) => {
 
   const abrirConferenciaRetail = () => {
     setRetailConferenciaAtiva(true);
-    setRetailLinhasPreparadas([]);
-    setRetailResumo(null);
-    setRetailErrosEstruturais([]);
+    setRetailParseState(RETAIL_PARSE_STATE_INITIAL);
     setRetailCodigosManuais({});
     setRetailConflitos([]);
     setRetailCommitando(false);
-    setRetailArquivoNome(null);
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.xlsx,.xls';
@@ -1527,13 +1524,10 @@ const PricingDashboard = ({ user }) => {
 
   const cancelarConferenciaRetail = () => {
     setRetailConferenciaAtiva(false);
-    setRetailLinhasPreparadas([]);
-    setRetailResumo(null);
-    setRetailErrosEstruturais([]);
+    setRetailParseState(RETAIL_PARSE_STATE_INITIAL);
     setRetailCodigosManuais({});
     setRetailConflitos([]);
     setRetailCommitando(false);
-    setRetailArquivoNome(null);
   };
 
   const temVinculosManuaisPendentes = useMemo(() => {
@@ -1554,16 +1548,20 @@ const PricingDashboard = ({ user }) => {
   }, [retailConferenciaAtiva, temVinculosManuaisPendentes, cancelarConferenciaRetail]);
 
   const processarArquivoRetail = async (file) => {
+    setRetailParseState(RETAIL_PARSE_STATE_INITIAL);
+    setRetailCodigosManuais({});
+    setRetailConflitos([]);
     try {
-      setRetailArquivoNome(file.name);
+      const nomeArquivo = file ? file.name : null;
       const { linhas, erros } = await lerArquivoPonta(file);
       if (erros && erros.length > 0) {
-        setRetailLinhasPreparadas([]);
-        setRetailResumo(null);
-        setRetailErrosEstruturais(erros);
+        setRetailParseState({
+          linhasPreparadas: [],
+          errosEstruturais: erros,
+          arquivoNome: nomeArquivo,
+        });
         return;
       }
-      setRetailErrosEstruturais([]);
       const { codigosDaBase, aliases, clientesPorNome } = montarMapasImportacao();
       const preparadas = prepararLote({
         linhas,
@@ -1571,20 +1569,30 @@ const PricingDashboard = ({ user }) => {
         aliases,
         clientesPorNome,
       });
-      setRetailLinhasPreparadas(preparadas);
       setRetailCodigosManuais({});
-      const resultadosVinculo = preparadas.map((l) => l.vinculo);
-      const resumoInicial = resumirLote(resultadosVinculo);
-      setRetailResumo(resumoInicial);
       setRetailConflitos([]);
       if (preparadas.length === 0) {
-        setRetailErrosEstruturais(['Nenhuma linha de dados foi lida do arquivo.']);
+        setRetailParseState({
+          linhasPreparadas: [],
+          errosEstruturais: ['Nenhuma linha de dados foi lida do arquivo.'],
+          arquivoNome: nomeArquivo,
+        });
+        return;
       }
+      setRetailParseState({
+        linhasPreparadas: preparadas,
+        errosEstruturais: [],
+        arquivoNome: nomeArquivo,
+      });
     } catch (e) {
       console.error(e);
-      setRetailErrosEstruturais([
-        `Erro ao processar arquivo: ${e && e.message ? e.message : String(e)}`,
-      ]);
+      setRetailParseState({
+        linhasPreparadas: [],
+        errosEstruturais: [
+          `Erro ao processar arquivo: ${e && e.message ? e.message : String(e)}`,
+        ],
+        arquivoNome: file ? file.name : null,
+      });
     }
   };
 
@@ -1608,6 +1616,35 @@ const PricingDashboard = ({ user }) => {
 
       if (precoRows.length === 0) {
         toast.error('Nenhuma linha pronta para importar.');
+        return;
+      }
+
+      let contagemEsperada = 0;
+      for (let i = 0; i < linhasAposCorrecaoManual.length; i++) {
+        const linha = linhasAposCorrecaoManual[i];
+        if (linha.errosLinha && linha.errosLinha.length > 0) continue;
+        const v = linha.vinculo;
+        if (!v || v.status === 'pendente') continue;
+        if (!v.datasulCode) continue;
+        if (!linha.clientId) continue;
+        if (!(linha.precoPonta != null && Number.isFinite(linha.precoPonta))) continue;
+        if (!linha.dataColeta) continue;
+        contagemEsperada++;
+      }
+      if (contagemEsperada !== precoRows.length) {
+        toast.error(
+          `Inconsistência detectada: ${precoRows.length} linha(s) para gravar vs ${contagemEsperada} linha(s) válidas no arquivo atual. ` +
+          `Abortando a importação por segurança. Recarregue a página e reimporte o arquivo.`,
+        );
+        return;
+      }
+      const linhasNoArquivo = retailParseState.linhasPreparadas.length;
+      const linhasNaTabela = linhasAposCorrecaoManual.length;
+      if (linhasNoArquivo !== linhasNaTabela) {
+        toast.error(
+          `Inconsistência detectada: ${linhasNaTabela} linha(s) em memória vs ${linhasNoArquivo} linha(s) do arquivo. ` +
+          `Abortando a importação por segurança. Recarregue a página e reimporte o arquivo.`,
+        );
         return;
       }
 
@@ -1864,7 +1901,7 @@ const PricingDashboard = ({ user }) => {
                     Conferência de importação de preços de ponta
                   </h2>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    {retailArquivoNome ? `Arquivo: ${retailArquivoNome}` : 'Selecione um arquivo para começar.'}
+                    {retailParseState.arquivoNome ? `Arquivo: ${retailParseState.arquivoNome}` : 'Selecione um arquivo para começar.'}
                   </p>
                 </div>
               </div>
@@ -1886,7 +1923,7 @@ const PricingDashboard = ({ user }) => {
               </div>
             </div>
 
-            {retailErrosEstruturais && retailErrosEstruturais.length > 0 && (
+            {retailParseState.errosEstruturais && retailParseState.errosEstruturais.length > 0 && (
               <div className="mb-4 p-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/20">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" size={18} />
@@ -1895,7 +1932,7 @@ const PricingDashboard = ({ user }) => {
                       Não foi possível ler o arquivo
                     </p>
                     <ul className="list-disc list-inside text-sm text-red-700 dark:text-red-400 space-y-1">
-                      {retailErrosEstruturais.map((e, i) => (
+                      {retailParseState.errosEstruturais.map((e, i) => (
                         <li key={i}>{e}</li>
                       ))}
                     </ul>
@@ -2043,7 +2080,16 @@ const PricingDashboard = ({ user }) => {
                             )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
-                            {linha.dataColeta || <span className="text-gray-400">-</span>}
+                            {linha.dataColetaBr || <span className="text-gray-400">-</span>}
+                            {linha.avisosLinha && linha.avisosLinha.length > 0 && (
+                              <div className="mt-1 space-y-0.5">
+                                {linha.avisosLinha.map((a, iAviso) => (
+                                  <div key={iAviso} className="text-xs text-amber-700 dark:text-amber-400">
+                                    {a}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2 align-top">
                             {temErroLinha ? (
@@ -2125,7 +2171,7 @@ const PricingDashboard = ({ user }) => {
               </div>
             )}
 
-            {(resumoAposCorrecao || (retailErrosEstruturais && retailErrosEstruturais.length > 0)) && (
+            {(resumoAposCorrecao || (retailParseState.errosEstruturais && retailParseState.errosEstruturais.length > 0)) && (
               <div className="mt-6 flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-800 pt-4">
                 <button
                   onClick={tentarSairConferencia}
