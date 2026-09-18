@@ -5,6 +5,10 @@ import {
   chaveAlias,
   normalizarNomeSite,
 } from '../utils/retailMatching';
+import {
+  parseDataColeta as parseDataColetaFromLib,
+  formatarDataColetaBr,
+} from '../lib/importRetail/parseDataColeta';
 
 const MOEDA_DEFAULT = 'BRL';
 
@@ -104,52 +108,7 @@ export function parsePrecoPonta(valor) {
 }
 
 export function parseDataColeta(valor) {
-  if (valor == null) return null;
-  if (valor instanceof Date) {
-    if (Number.isNaN(valor.getTime())) return null;
-    const ano = valor.getFullYear();
-    const mes = String(valor.getMonth() + 1).padStart(2, '0');
-    const dia = String(valor.getDate()).padStart(2, '0');
-    return `${ano}-${mes}-${dia}`;
-  }
-  if (typeof valor === 'number') {
-    const d = new Date(valor);
-    return Number.isNaN(d.getTime()) ? null : parseDataColeta(d);
-  }
-  if (typeof valor !== 'string') return null;
-  const s = valor.trim();
-  if (s === '') return null;
-
-  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (isoMatch) {
-    const [, ano, mes, dia] = isoMatch;
-    const d = new Date(`${ano}-${mes}-${dia}T00:00:00`);
-    if (!Number.isNaN(d.getTime())) return `${ano}-${mes}-${dia}`;
-    return null;
-  }
-
-  const brMatch = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s);
-  if (brMatch) {
-    const [, diaStr, mesStr, anoStr] = brMatch;
-    const dia = Number(diaStr);
-    const mes = Number(mesStr);
-    const ano = Number(anoStr);
-    if (mes < 1 || mes > 12) return null;
-    const bissexto = ano % 4 === 0 && (ano % 100 !== 0 || ano % 400 === 0);
-    const diasPorMes = [31, bissexto ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if (dia < 1 || dia > diasPorMes[mes - 1]) return null;
-    const d = new Date(ano, mes - 1, dia);
-    if (!Number.isNaN(d.getTime())) {
-      return (
-        `${d.getFullYear()}-` +
-        `${String(d.getMonth() + 1).padStart(2, '0')}-` +
-        `${String(d.getDate()).padStart(2, '0')}`
-      );
-    }
-    return null;
-  }
-
-  return null;
+  return parseDataColetaFromLib(valor);
 }
 
 export async function lerArquivoPonta(file) {
@@ -187,8 +146,8 @@ export async function lerArquivoPonta(file) {
   const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
-    defval: '',
-    raw: false,
+    defval: null,
+    raw: true,
   });
 
   if (!rows || rows.length === 0) {
@@ -211,9 +170,11 @@ export async function lerArquivoPonta(file) {
     const obj = {};
     for (const colNorm of Object.keys(mapa)) {
       const idx = mapa[colNorm];
-      obj[colNorm] = row[idx] ?? '';
+      obj[colNorm] = row[idx] ?? null;
     }
-    const temConteudo = Object.values(obj).some((v) => v != null && String(v).trim() !== '');
+    const temConteudo = Object.values(obj).some(
+      (v) => v != null && (v instanceof Date ? true : String(v).trim() !== ''),
+    );
     if (!temConteudo) continue;
     linhas.push({
       ...obj,
@@ -234,16 +195,40 @@ function normalizarMoedaCampo(moeda) {
   return s === '' ? MOEDA_DEFAULT : s;
 }
 
+function obterHojeIso() {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+  const dia = String(hoje.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+
+function dataAnterior2020(dataIso) {
+  if (!dataIso) return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dataIso);
+  if (!m) return false;
+  return Number(m[1]) < 2020;
+}
+
+function dataFuturaRelativa(dataIso, hojeIso) {
+  if (!dataIso || !hojeIso) return false;
+  return dataIso > hojeIso;
+}
+
 export function prepararLote({
   linhas,
   codigosDaBase,
   aliases,
   clientesPorNome,
+  hojeIso,
 } = {}) {
   const arr = Array.isArray(linhas) ? linhas : [];
   const clientesMap = clientesPorNome instanceof Map ? clientesPorNome : new Map();
   const codigosSet = codigosDaBase instanceof Set ? codigosDaBase : new Set();
   const aliasesMap = aliases instanceof Map ? aliases : new Map();
+  const referenciaHoje = typeof hojeIso === 'string' && hojeIso.length > 0
+    ? hojeIso
+    : obterHojeIso();
 
   return arr.map((linha, idx) => {
     const linhaArquivo =
@@ -255,6 +240,7 @@ export function prepararLote({
     const fonte = linha ? linha.fonte : null;
 
     const errosLinha = [];
+    const avisosLinha = [];
 
     const clienteNorm = normalizarNomeSite(clienteNome);
     let clientId = null;
@@ -276,6 +262,16 @@ export function prepararLote({
     const dataColeta = parseDataColeta(linha ? linha.data_coleta : null);
     if (dataColeta == null) {
       errosLinha.push(`Data de coleta inválida: ${String(linha ? linha.data_coleta : '')}`);
+    } else {
+      if (dataAnterior2020(dataColeta)) {
+        errosLinha.push(
+          `Data de coleta anterior a 2020 (${formatarDataColetaBr(dataColeta)}). Verifique se não houve erro de digitação.`,
+        );
+      } else if (dataFuturaRelativa(dataColeta, referenciaHoje)) {
+        avisosLinha.push(
+          `Data de coleta futura (${formatarDataColetaBr(dataColeta)}). Importação permitida; confira antes de confirmar.`,
+        );
+      }
     }
 
     const vinculo = resolveRetailLink({
@@ -298,9 +294,12 @@ export function prepararLote({
       precoPonta: Number.isFinite(precoPonta) && precoPonta > 0 ? precoPonta : null,
       moeda,
       dataColeta,
+      dataColetaBr: formatarDataColetaBr(dataColeta),
       fonte: fonte == null || String(fonte).trim() === '' ? null : String(fonte),
       vinculo,
       errosLinha,
+      avisosLinha,
     };
   });
 }
+
