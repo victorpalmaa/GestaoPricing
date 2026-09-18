@@ -187,7 +187,7 @@ const CATALOG_CONFIG = {
     editTitle: 'Editar registro do Catálogo Latam',
     icon: Globe2,
     ptaxLabel: 'PTAX',
-    ptaxValue: 'R$ 4,48',
+    ptaxValue: 'R$ 4,63',
     preserveDatasulCode: false,
     parameters: {
       freight: 'EX WORKS',
