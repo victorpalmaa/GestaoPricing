@@ -48,6 +48,17 @@ import {
   MARKUP_STATUS,
   resolveMarkupTier,
 } from '../utils/markup';
+import {
+  calcularMarkupPonta,
+  formatarMarkupPonta,
+  markupPontaForaDaFaixa,
+  moedasDivergem,
+  selecionarColetaReferencia,
+  selecionarTodasColetasPorChave,
+  PTAX,
+  CANAL_REFERENCIA,
+} from '../lib/pricing/markupPonta';
+import { avaliarConversaoPonta } from '../lib/pricing/unidadeEmbalagem';
 
 const TIER_PALETTE = {
   alto:  { fg: '#32AB10', bg: 'rgba(50,171,16,0.12)',  border: 'rgba(50,171,16,0.45)',  bar: '#32AB10' },
@@ -149,7 +160,7 @@ const PricingDashboard = ({ user }) => {
   const [retailConflitos, setRetailConflitos] = useState([]);
   const [retailVerificandoConflitos, setRetailVerificandoConflitos] = useState(false);
   const [retailSkuAliases, setRetailSkuAliases] = useState([]);
-  const [retailPrecosPorSku, setRetailPrecosPorSku] = useState(new Map());
+  const [retailTodasColetas, setRetailTodasColetas] = useState([]);
 
   const CATEGORY_OPTIONS = ['Pó', 'Gel', 'Pastilha', 'Cápsula', 'Goma', 'Softgel'];
   const SUBCATEGORY_OPTIONS = ['Goma', 'Cápsula', 'Colágeno', 'Creatina', 'Gel', 'Glutamina', 'Outros', 'Pastilha', 'Proteína'];
@@ -189,8 +200,7 @@ const PricingDashboard = ({ user }) => {
   }, [retailDetailOpen, fecharRetailDetail]);
 
   const abrirRetailDetailSeOk = (item) => {
-    const info = markupPorLinha.get(item.id);
-    if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) return;
+    if (!item || !item.id) return;
     setRetailDetailSkuId(item.id);
     setRetailDetailOpen(true);
   };
@@ -339,6 +349,26 @@ const PricingDashboard = ({ user }) => {
     return [...new Set(matches.map(item => item.code))];
   }, [safePricingData, filters.sku, filters.client]);
 
+  const retailColetasPorChave = useMemo(() => {
+    return selecionarTodasColetasPorChave(retailTodasColetas || []);
+  }, [retailTodasColetas]);
+
+  const retailPrecosPorSku = useMemo(() => {
+    const m = new Map();
+    for (const [chave, arr] of retailColetasPorChave.entries()) {
+      const ref = selecionarColetaReferencia(arr);
+      if (ref) {
+        m.set(chave, {
+          retail_price: ref.retail_price,
+          currency: ref.currency,
+          collected_at: ref.collected_at,
+          source: ref.source,
+        });
+      }
+    }
+    return m;
+  }, [retailColetasPorChave]);
+
   useEffect(() => {
     loadData();
   }, [filters.dateFrom, filters.dateTo]);
@@ -352,6 +382,27 @@ const PricingDashboard = ({ user }) => {
           event: '*',
           schema: 'public',
           table: 'pricing_history'
+        },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('pricing_dashboard_retail_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'client_retail_prices'
         },
         () => {
           loadData();
@@ -563,27 +614,15 @@ const PricingDashboard = ({ user }) => {
       try {
         const { data: retailPrecos, error: retailPrecosError } = await supabase
           .from('client_retail_prices')
-          .select('client_id, datasul_code, retail_price, currency, collected_at')
+          .select('id, client_id, datasul_code, nome_site, retail_price, currency, collected_at, source, created_at')
           .order('collected_at', { ascending: false });
         if (retailPrecosError) {
-          setRetailPrecosPorSku(new Map());
+          setRetailTodasColetas([]);
         } else {
-          const m = new Map();
-          for (const r of retailPrecos || []) {
-            if (!r.client_id || !r.datasul_code) continue;
-            const chave = `${r.client_id}|${String(r.datasul_code).trim().toUpperCase()}`;
-            if (!m.has(chave)) {
-              m.set(chave, {
-                retail_price: r.retail_price,
-                currency: r.currency,
-                collected_at: r.collected_at,
-              });
-            }
-          }
-          setRetailPrecosPorSku(m);
+          setRetailTodasColetas(retailPrecos || []);
         }
       } catch (e) {
-        setRetailPrecosPorSku(new Map());
+        setRetailTodasColetas([]);
       }
 
     } catch (error) {
@@ -654,6 +693,13 @@ const PricingDashboard = ({ user }) => {
         coletaData: null,
         proMaisRecente: false,
         linhaHistorica: !item.isCurrent,
+        markupPontaValor: null,
+        markupPontaFormatado: '-',
+        markupPontaForaFaixa: false,
+        moedasDivergentes: false,
+        coletaReferencia: null,
+        coletasDoSku: [],
+        coletaReferenciaData: null,
       };
       if (!item.isCurrent) {
         m.set(item.id, semPontaEntrada);
@@ -679,6 +725,31 @@ const PricingDashboard = ({ user }) => {
       if (coletaData && proData && !Number.isNaN(coletaData.getTime()) && !Number.isNaN(proData.getTime())) {
         proMaisRecente = proData.getTime() > coletaData.getTime();
       }
+
+      const chaveDup = (item.client_id && item.code)
+        ? `${String(item.client_id)}::${String(item.code).trim().toUpperCase()}`
+        : null;
+      const coletasDoSku = chaveDup ? (retailColetasPorChave.get(chaveDup) || []) : [];
+      const coletaReferencia = selecionarColetaReferencia(coletasDoSku);
+      let precoPontaNovo = null;
+      let moedaPontaNovo = 'BRL';
+      if (coletaReferencia) {
+        precoPontaNovo = coletaReferencia.retail_price;
+        moedaPontaNovo = coletaReferencia.currency || 'BRL';
+      }
+      const markupPontaValor = calcularMarkupPonta(
+        precoPontaNovo,
+        precoPro,
+        moedaPontaNovo,
+        moedaPro
+      );
+      const markupPontaFormatado = formatarMarkupPonta(markupPontaValor);
+      const markupPontaForaFaixa = markupPontaForaDaFaixa(markupPontaValor);
+      const moedasDivergentes = coletaReferencia ? moedasDivergem(moedaPontaNovo, moedaPro) : false;
+      const coletaReferenciaData = coletaReferencia && coletaReferencia.collected_at
+        ? new Date(coletaReferencia.collected_at)
+        : null;
+
       m.set(item.id, {
         resultado,
         ponta,
@@ -686,10 +757,17 @@ const PricingDashboard = ({ user }) => {
         coletaData,
         proMaisRecente,
         linhaHistorica: false,
+        markupPontaValor,
+        markupPontaFormatado,
+        markupPontaForaFaixa,
+        moedasDivergentes,
+        coletaReferencia,
+        coletasDoSku,
+        coletaReferenciaData,
       });
     }
     return m;
-  }, [safePricingData, retailPrecosPorSku]);
+  }, [safePricingData, retailPrecosPorSku, retailColetasPorChave]);
 
   const markupPorCliente = useMemo(() => {
     const byClient = new Map();
@@ -698,15 +776,19 @@ const PricingDashboard = ({ user }) => {
       const clientId = item.client_id;
       if (!clientId) continue;
       const info = markupPorLinha.get(item.id);
-      if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) continue;
+      if (!info) continue;
+      const mp = info.markupPontaValor;
+      if (!Number.isFinite(mp) || mp <= 0) continue;
       if (!byClient.has(clientId)) byClient.set(clientId, []);
       byClient.get(clientId).push({
         id: item.id,
         sku: item.sku,
         code: item.code,
-        markup: info.resultado.markup,
-        tier: resolveMarkupTier(info.resultado.markup),
+        markup: mp,
       });
+    }
+    for (const [k, arr] of byClient.entries()) {
+      arr.sort((a, b) => b.markup - a.markup);
     }
     return byClient;
   }, [safePricingData, markupPorLinha]);
@@ -1327,6 +1409,36 @@ const PricingDashboard = ({ user }) => {
     return m;
   }, [safePricingData]);
 
+  const skuInfoPorChave = useMemo(() => {
+    const m = new Map();
+    for (const item of safePricingData) {
+      if (!item.client_id || !item.code) continue;
+      if (!item.isCurrent) continue;
+      const chave = `${item.client_id}::${String(item.code).trim().toUpperCase()}`;
+      if (!m.has(chave)) {
+        m.set(chave, {
+          sku: item.sku,
+          gross_price: item.db_gross_price ?? item.gross_price,
+          currency: item.currency,
+          code: item.code,
+        });
+      }
+    }
+    for (const item of safePricingData) {
+      if (!item.client_id || !item.code) continue;
+      const chave = `${item.client_id}::${String(item.code).trim().toUpperCase()}`;
+      if (!m.has(chave)) {
+        m.set(chave, {
+          sku: item.sku,
+          gross_price: item.db_gross_price ?? item.gross_price,
+          currency: item.currency,
+          code: item.code,
+        });
+      }
+    }
+    return m;
+  }, [safePricingData]);
+
   const linhasAposCorrecaoManual = useMemo(() => {
     return retailParseState.linhasPreparadas.map((linha, idx) => {
       const manual = retailCodigosManuais[idx];
@@ -1353,6 +1465,57 @@ const PricingDashboard = ({ user }) => {
     });
   }, [retailParseState.linhasPreparadas, retailCodigosManuais]);
 
+  const linhasComConversaoPonta = useMemo(() => {
+    return linhasAposCorrecaoManual.map((linha) => {
+      const errosLinha = [...(linha.errosLinha || [])];
+      const avisosLinha = [...(linha.avisosLinha || [])];
+
+      const v = linha.vinculo;
+      let conversaoPonta = null;
+      if (
+        v &&
+        v.datasulCode &&
+        linha.clientId &&
+        linha.precoPonta != null &&
+        Number.isFinite(Number(linha.precoPonta))
+      ) {
+        const chave = `${linha.clientId}::${String(v.datasulCode).trim().toUpperCase()}`;
+        const info = skuInfoPorChave.get(chave);
+        if (info) {
+          conversaoPonta = avaliarConversaoPonta({
+            precoPontaColetado: linha.precoPonta,
+            moedaPonta: linha.moeda,
+            precoBruto: info.gross_price,
+            moedaBruto: info.currency,
+            nomeSku: info.sku,
+          });
+          if (conversaoPonta && conversaoPonta.bloquear) {
+            if (conversaoPonta.motivoBloqueio) {
+              errosLinha.push(conversaoPonta.motivoBloqueio);
+            }
+          }
+          if (conversaoPonta && conversaoPonta.fatorAplicado) {
+            avisosLinha.push(
+              `Preço convertido por unidade de embalagem (x${conversaoPonta.fatorAplicado}).`,
+            );
+          }
+          if (conversaoPonta && conversaoPonta.avisoForaFaixa && !conversaoPonta.bloquear) {
+            avisosLinha.push(
+              `Markup resultante (${formatarMarkupPonta(conversaoPonta.markupFinal)}) fora da faixa esperada.`,
+            );
+          }
+        }
+      }
+
+      return {
+        ...linha,
+        errosLinha,
+        avisosLinha,
+        conversaoPonta,
+      };
+    });
+  }, [linhasAposCorrecaoManual, skuInfoPorChave]);
+
   const resumoAposCorrecao = useMemo(() => {
     if (retailParseState.linhasPreparadas.length === 0) return null;
     let total = 0;
@@ -1361,7 +1524,7 @@ const PricingDashboard = ({ user }) => {
     let pendentes = 0;
     let invalidos = 0;
     let errosLinhaCount = 0;
-    for (const linha of linhasAposCorrecaoManual) {
+    for (const linha of linhasComConversaoPonta) {
       const temErro = linha.errosLinha && linha.errosLinha.length > 0;
       if (temErro) errosLinhaCount++;
       const v = linha.vinculo;
@@ -1394,7 +1557,7 @@ const PricingDashboard = ({ user }) => {
       podeCommitar: total > 0 && pendentes === 0 && invalidos === 0 && errosLinhaCount === 0,
       errosLinhaCount,
     };
-  }, [linhasAposCorrecaoManual, retailParseState.linhasPreparadas.length]);
+  }, [linhasComConversaoPonta, retailParseState.linhasPreparadas.length]);
 
   const podeCommitarAposCorrecao = () => {
     if (!resumoAposCorrecao) return false;
@@ -1415,8 +1578,9 @@ const PricingDashboard = ({ user }) => {
     const userId = user?.id || null;
     const precoRows = [];
     const aliasRows = [];
-    for (let idx = 0; idx < linhasAposCorrecaoManual.length; idx++) {
-      const linha = linhasAposCorrecaoManual[idx];
+    const logConversoes = [];
+    for (let idx = 0; idx < linhasComConversaoPonta.length; idx++) {
+      const linha = linhasComConversaoPonta[idx];
       if (linha.errosLinha && linha.errosLinha.length > 0) {
         continue;
       }
@@ -1424,13 +1588,29 @@ const PricingDashboard = ({ user }) => {
       if (!v || v.status === 'pendente') continue;
       if (!v.datasulCode) continue;
       if (!linha.clientId) continue;
-      if (!(linha.precoPonta != null && Number.isFinite(linha.precoPonta))) continue;
+      const precoConvertido =
+        linha.conversaoPonta &&
+        linha.conversaoPonta.precoConvertido != null &&
+        Number.isFinite(Number(linha.conversaoPonta.precoConvertido))
+          ? Number(linha.conversaoPonta.precoConvertido)
+          : linha.precoPonta;
+      if (!(precoConvertido != null && Number.isFinite(precoConvertido))) continue;
       if (!linha.dataColeta) continue;
+      if (linha.conversaoPonta && linha.conversaoPonta.fatorAplicado) {
+        logConversoes.push({
+          linhaArquivo: linha.linhaArquivo || idx + 2,
+          cliente: linha.clienteNome,
+          codigo: v.datasulCode,
+          precoColetado: linha.precoPonta,
+          precoGravado: precoConvertido,
+          fator: linha.conversaoPonta.fatorAplicado,
+        });
+      }
       const row = {
         client_id: linha.clientId,
         datasul_code: String(v.datasulCode).trim().toUpperCase(),
         nome_site: String(linha.nomeSite || '').trim(),
-        retail_price: linha.precoPonta,
+        retail_price: precoConvertido,
         currency: linha.moeda || 'BRL',
         collected_at: linha.dataColeta,
         source: linha.fonte,
@@ -1447,7 +1627,11 @@ const PricingDashboard = ({ user }) => {
         });
       }
     }
-    return { precoRows, aliasRows };
+    if (logConversoes.length > 0) {
+      // eslint-disable-next-line no-console
+      console.info('[import-retail] Conversões de unidade aplicadas:', logConversoes);
+    }
+    return { precoRows, aliasRows, logConversoes };
   };
 
   const verificarConflitosRetail = async (precoRows) => {
@@ -1612,7 +1796,7 @@ const PricingDashboard = ({ user }) => {
     if (!podeCommitarAposCorrecao()) return;
     try {
       setRetailCommitando(true);
-      const { precoRows, aliasRows } = montarPrecoRows();
+      const { precoRows, aliasRows, logConversoes } = montarPrecoRows();
 
       if (precoRows.length === 0) {
         toast.error('Nenhuma linha pronta para importar.');
@@ -1620,14 +1804,20 @@ const PricingDashboard = ({ user }) => {
       }
 
       let contagemEsperada = 0;
-      for (let i = 0; i < linhasAposCorrecaoManual.length; i++) {
-        const linha = linhasAposCorrecaoManual[i];
+      for (let i = 0; i < linhasComConversaoPonta.length; i++) {
+        const linha = linhasComConversaoPonta[i];
         if (linha.errosLinha && linha.errosLinha.length > 0) continue;
         const v = linha.vinculo;
         if (!v || v.status === 'pendente') continue;
         if (!v.datasulCode) continue;
         if (!linha.clientId) continue;
-        if (!(linha.precoPonta != null && Number.isFinite(linha.precoPonta))) continue;
+        const precoConvertido =
+          linha.conversaoPonta &&
+          linha.conversaoPonta.precoConvertido != null &&
+          Number.isFinite(Number(linha.conversaoPonta.precoConvertido))
+            ? Number(linha.conversaoPonta.precoConvertido)
+            : linha.precoPonta;
+        if (!(precoConvertido != null && Number.isFinite(precoConvertido))) continue;
         if (!linha.dataColeta) continue;
         contagemEsperada++;
       }
@@ -1639,7 +1829,7 @@ const PricingDashboard = ({ user }) => {
         return;
       }
       const linhasNoArquivo = retailParseState.linhasPreparadas.length;
-      const linhasNaTabela = linhasAposCorrecaoManual.length;
+      const linhasNaTabela = linhasComConversaoPonta.length;
       if (linhasNoArquivo !== linhasNaTabela) {
         toast.error(
           `Inconsistência detectada: ${linhasNaTabela} linha(s) em memória vs ${linhasNoArquivo} linha(s) do arquivo. ` +
@@ -1683,7 +1873,11 @@ const PricingDashboard = ({ user }) => {
         }
       }
 
-      toast.success(`Importação concluída: ${insertedPrecos ? insertedPrecos.length : precoRows.length} preço(s) gravado(s).`);
+      let mensagemSucesso = `Importação concluída: ${insertedPrecos ? insertedPrecos.length : precoRows.length} preço(s) gravado(s).`;
+      if (logConversoes && logConversoes.length > 0) {
+        mensagemSucesso += ` (${logConversoes.length} com ajuste de unidade de embalagem)`;
+      }
+      toast.success(mensagemSucesso);
       setRetailCommitando(false);
       cancelarConferenciaRetail();
       loadData();
@@ -2014,9 +2208,9 @@ const PricingDashboard = ({ user }) => {
               </div>
             )}
 
-            {linhasAposCorrecaoManual.length > 0 && (
+            {linhasComConversaoPonta.length > 0 && (
               <div className="overflow-auto max-h-[62vh] border border-gray-200 dark:border-gray-800 rounded-lg">
-                <table className="w-full min-w-[1100px] text-sm">
+                <table className="w-full min-w-[1400px] text-sm">
                   <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-20">
                     <tr>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -2035,6 +2229,12 @@ const PricingDashboard = ({ user }) => {
                         Preço de ponta
                       </th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Markup
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Conversão unid.
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                         Data
                       </th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[280px]">
@@ -2043,16 +2243,34 @@ const PricingDashboard = ({ user }) => {
                     </tr>
                   </thead>
                   <tbody className="bg-white dark:bg-[#0a0a0a] divide-y divide-gray-200 dark:divide-gray-800">
-                    {linhasAposCorrecaoManual.map((linha, idx) => {
+                    {linhasComConversaoPonta.map((linha, idx) => {
                       const temErroLinha = linha.errosLinha && linha.errosLinha.length > 0;
                       const v = linha.vinculo || {};
+                      const conv = linha.conversaoPonta || null;
                       const rowClass = temErroLinha
                         ? 'bg-red-50 dark:bg-red-900/10'
                         : v.status === 'pendente'
                         ? 'bg-amber-50 dark:bg-amber-900/10'
+                        : conv && conv.avisoForaFaixa
+                        ? 'bg-yellow-50 dark:bg-yellow-900/10'
                         : '';
                       const skuOptions = linha.clientId ? (skusPorCliente.get(linha.clientId) || new Map()) : new Map();
                       const skuOptionsList = Array.from(skuOptions.values());
+                      const markupMostrar =
+                        conv && conv.markupFinal != null
+                          ? conv.markupFinal
+                          : conv && conv.markupInicial != null
+                          ? conv.markupInicial
+                          : null;
+                      const markupFormatado = formatarMarkupPonta(markupMostrar);
+                      const markupFora =
+                        conv &&
+                        (conv.bloquear
+                          ? true
+                          : markupMostrar != null && markupPontaForaDaFaixa(markupMostrar));
+                      const precoMostrar =
+                        conv && conv.precoConvertido != null ? conv.precoConvertido : linha.precoPonta;
+                      const houveConversao = Boolean(conv && conv.fatorAplicado);
                       return (
                         <tr key={idx} className={rowClass}>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-700 dark:text-gray-300 align-top">
@@ -2070,11 +2288,44 @@ const PricingDashboard = ({ user }) => {
                             {linha.datasulCodeInformado || <span className="text-gray-400">-</span>}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
-                            {linha.precoPonta != null ? (
-                              <span>
-                                {linha.moeda === 'USD' ? '$' : 'R$'} {Number(linha.precoPonta).toFixed(2)}
-                                <span className="text-gray-400 text-xs ml-2">{linha.moeda}</span>
+                            {precoMostrar != null ? (
+                              <div>
+                                <span>
+                                  {linha.moeda === 'USD' ? '$' : 'R$'} {Number(precoMostrar).toFixed(2)}
+                                  <span className="text-gray-400 text-xs ml-2">{linha.moeda}</span>
+                                </span>
+                                {houveConversao && conv && conv.precoColetado != null && (
+                                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                  Coletado: {linha.moeda === 'USD' ? '$' : 'R$'} {Number(conv.precoColetado).toFixed(2)}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap align-top">
+                            {markupMostrar != null ? (
+                              <span
+                                className={`font-semibold ${
+                                  markupFora
+                                    ? conv && conv.bloquear
+                                      ? 'text-red-700 dark:text-red-400'
+                                      : 'text-amber-700 dark:text-amber-400'
+                                    : 'text-gray-800 dark:text-gray-200'
+                                }`}
+                              >
+                                {markupFormatado}
                               </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-800 dark:text-gray-200 align-top">
+                            {houveConversao ? (
+                              <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-900 whitespace-nowrap">
+                                x{conv.fatorAplicado}
+                              </Badge>
                             ) : (
                               <span className="text-gray-400">-</span>
                             )}
@@ -2084,7 +2335,16 @@ const PricingDashboard = ({ user }) => {
                             {linha.avisosLinha && linha.avisosLinha.length > 0 && (
                               <div className="mt-1 space-y-0.5">
                                 {linha.avisosLinha.map((a, iAviso) => (
-                                  <div key={iAviso} className="text-xs text-amber-700 dark:text-amber-400">
+                                  <div
+                                    key={iAviso}
+                                    className={`text-xs ${
+                                      /fora da faixa|Markup resultante/.test(a)
+                                        ? 'text-yellow-700 dark:text-yellow-400'
+                                        : /convertido|unidade de embalagem/.test(a)
+                                        ? 'text-indigo-700 dark:text-indigo-400'
+                                        : 'text-amber-700 dark:text-amber-400'
+                                    }`}
+                                  >
                                     {a}
                                   </div>
                                 ))}
@@ -2467,11 +2727,10 @@ const PricingDashboard = ({ user }) => {
                   ) : (
                     sortedData.map((item) => {
                       const info = markupPorLinha.get(item.id);
-                      const statusOk = info && info.resultado && info.resultado.status === MARKUP_STATUS.OK;
                       return (
                       <tr
                         key={item.id}
-                        className={`group hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors ${statusOk ? 'cursor-pointer' : ''}`}
+                        className="group hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer"
                         onClick={() => abrirRetailDetailSeOk(item)}
                       >
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sticky left-0 z-30 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50 dark:group-hover:bg-gray-900 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
@@ -2551,111 +2810,95 @@ const PricingDashboard = ({ user }) => {
                           <TooltipProvider>
                             {(() => {
                               const info = markupPorLinha.get(item.id);
-                              const r = info && info.resultado;
-                              if (!r) {
+                              if (!info) {
                                 return <span className="text-gray-400">—</span>;
                               }
-                              if (r.status === MARKUP_STATUS.OK) {
-                                const tier = resolveMarkupTier(r.markup);
-                                const formatted = formatMarkup(r.markup);
-                                const pal = getTierColor(tier);
-                                const bg = pal.bg;
-                                const fg = pal.fg;
-                                return (
-                                  <div className="flex flex-col items-end gap-1">
-                                    <span
-                                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold"
-                                      style={{ backgroundColor: bg, color: fg }}
-                                    >
-                                      {formatted}
-                                    </span>
-                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span
-                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
-                                          >
-                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
-                                          </span>
-                                        </TooltipTrigger>
-                                        {info.proMaisRecente ? (
+                              const valorFormatado = info.markupPontaFormatado;
+                              const temValor = valorFormatado !== '-';
+                              const foraFaixa = Boolean(info.markupPontaForaFaixa);
+                              const divergente = Boolean(info.moedasDivergentes);
+                              const pillBg = foraFaixa
+                                ? 'rgba(245,158,11,0.12)'
+                                : temValor
+                                  ? 'rgba(107,114,128,0.10)'
+                                  : 'transparent';
+                              const pillFg = foraFaixa
+                                ? '#B45309'
+                                : temValor
+                                  ? '#1F2937'
+                                  : '#9CA3AF';
+                              const pillBorder = foraFaixa
+                                ? 'rgba(245,158,11,0.35)'
+                                : temValor
+                                  ? 'rgba(107,114,128,0.20)'
+                                  : 'transparent';
+                              const dataColeta = info.coletaReferenciaData;
+                              const temData = dataColeta && !Number.isNaN(dataColeta.getTime());
+                              return (
+                                <div className="flex flex-col items-end gap-1">
+                                  {temValor ? (
+                                    <div className="flex flex-col items-end gap-1">
+                                      <span
+                                        className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border"
+                                        style={{
+                                          backgroundColor: pillBg,
+                                          color: pillFg,
+                                          borderColor: pillBorder,
+                                        }}
+                                      >
+                                        {foraFaixa && <AlertCircle size={12} className="mr-1" />}
+                                        Markup de ponta: {valorFormatado}
+                                      </span>
+                                      {divergente && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-900/50">
+                                              Moedas distintas · PTAX {PTAX.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            </span>
+                                          </TooltipTrigger>
                                           <TooltipContent>
-                                            <p>Preço PRO mais recente que a coleta de ponta</p>
+                                            <p>Conversão aplicada com PTAX 4,63</p>
                                           </TooltipContent>
-                                        ) : null}
-                                      </Tooltip>
-                                    ) : null}
-                                  </div>
-                                );
-                              }
-                              if (r.status === MARKUP_STATUS.SEM_PONTA) {
-                                return <span className="text-gray-400">—</span>;
-                              }
-                              if (r.status === MARKUP_STATUS.MOEDA_DIVERGENTE) {
-                                return (
-                                  <div className="flex flex-col items-end gap-1">
+                                        </Tooltip>
+                                      )}
+                                      {foraFaixa && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                              Verificar unidade de embalagem
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Markup fora da faixa esperada [1,5 ; 15]</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">-</span>
+                                  )}
+                                  {temData && (
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        <span className="inline-flex items-center justify-end text-amber-600 dark:text-amber-400 cursor-help">
-                                          <AlertCircle size={18} />
+                                        <span
+                                          className={`text-[11px] ${
+                                            info.proMaisRecente
+                                              ? 'text-amber-700 dark:text-amber-400 font-medium'
+                                              : 'text-gray-400 dark:text-gray-500'
+                                          }`}
+                                        >
+                                          {format(dataColeta, 'dd/MM/yyyy', { locale: ptBR })}
                                         </span>
                                       </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Moeda do preço PRO difere da moeda de ponta</p>
-                                      </TooltipContent>
+                                      {info.proMaisRecente ? (
+                                        <TooltipContent>
+                                          <p>Preço PRO mais recente que a coleta de ponta</p>
+                                        </TooltipContent>
+                                      ) : null}
                                     </Tooltip>
-                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span
-                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
-                                          >
-                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
-                                          </span>
-                                        </TooltipTrigger>
-                                        {info.proMaisRecente ? (
-                                          <TooltipContent><p>Preço PRO mais recente que a coleta de ponta</p></TooltipContent>
-                                        ) : null}
-                                      </Tooltip>
-                                    ) : null}
-                                  </div>
-                                );
-                              }
-                              if (
-                                r.status === MARKUP_STATUS.MOEDA_INVALIDA ||
-                                r.status === MARKUP_STATUS.PONTA_INVALIDA ||
-                                r.status === MARKUP_STATUS.PRO_INVALIDO
-                              ) {
-                                return (
-                                  <div className="flex flex-col items-end gap-1">
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="inline-flex items-center justify-end text-red-600 dark:text-red-400 cursor-help">
-                                          <AlertCircle size={18} />
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Não foi possível calcular o markup</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    {info.coletaData && !Number.isNaN(info.coletaData.getTime()) ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span
-                                            className={`text-[11px] ${info.proMaisRecente ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-gray-400 dark:text-gray-500'}`}
-                                          >
-                                            {format(info.coletaData, 'dd/MM/yyyy', { locale: ptBR })}
-                                          </span>
-                                        </TooltipTrigger>
-                                        {info.proMaisRecente ? (
-                                          <TooltipContent><p>Preço PRO mais recente que a coleta de ponta</p></TooltipContent>
-                                        ) : null}
-                                      </Tooltip>
-                                    ) : null}
-                                  </div>
-                                );
-                              }
-                              return <span className="text-gray-400">—</span>;
+                                  )}
+                                </div>
+                              );
                             })()}
                           </TooltipProvider>
                         </td>
@@ -2719,21 +2962,53 @@ const PricingDashboard = ({ user }) => {
 
         {/* Modal de Detalhe de Preço de Ponta */}
         {retailDetailOpen && skuAtualDetail && (() => {
-          const info = markupPorLinha.get(skuAtualDetail.id);
-          if (!info || !info.resultado || info.resultado.status !== MARKUP_STATUS.OK) return null;
-          const resultado = info.resultado;
-          const ponta = info.ponta;
+          const infoFallback = {
+            resultado: { status: MARKUP_STATUS.SEM_PONTA, markup: null, tier: null, moeda: null, detalhe: null },
+            markupPontaValor: null,
+            markupPontaFormatado: '-',
+            markupPontaForaFaixa: false,
+            moedasDivergentes: false,
+            coletaReferencia: null,
+            coletasDoSku: [],
+            coletaReferenciaData: null,
+          };
+          const info = markupPorLinha.get(skuAtualDetail.id) || infoFallback;
+          const resultado = info.resultado || infoFallback.resultado;
           const precoPro = Number(skuAtualDetail.gross_price);
           const moedaPro = skuAtualDetail.currency || 'BRL';
-          const precoPonta = ponta && Number.isFinite(Number(ponta.retail_price)) ? Number(ponta.retail_price) : null;
-          const moedaPonta = ponta ? ponta.currency || 'BRL' : 'BRL';
-          const dataColeta = ponta ? ponta.collected_at : null;
-          const fonte = ponta ? ponta.source : null;
+
+          const coletaRef = info.coletaReferencia;
+          const todasColetas = info.coletasDoSku || [];
+          const outrosCanais = todasColetas.filter((c) => c.source !== CANAL_REFERENCIA);
+
+          const precoPonta = coletaRef && Number.isFinite(Number(coletaRef.retail_price))
+            ? Number(coletaRef.retail_price)
+            : null;
+          const moedaPonta = coletaRef ? coletaRef.currency || 'BRL' : 'BRL';
+
+          const markupPontaFormatado = info.markupPontaFormatado || infoFallback.markupPontaFormatado;
+          const markupPontaForaFaixa = !!info.markupPontaForaFaixa;
+          const moedasDivergentes = !!info.moedasDivergentes;
 
           const tier = resultado.tier;
           const pal = getTierColor(tier);
           const pillBg = pal.bg;
           const pillFg = pal.fg;
+
+          let mpBg = 'rgba(148,163,184,0.10)';
+          let mpFg = '#64748B';
+          let mpBorder = 'rgba(148,163,184,0.4)';
+          if (info.markupPontaValor != null) {
+            if (markupPontaForaFaixa) {
+              mpBg = 'rgba(180,83,9,0.10)';
+              mpFg = '#B45309';
+              mpBorder = 'rgba(180,83,9,0.45)';
+            } else {
+              mpBg = 'rgba(132,90,250,0.10)';
+              mpFg = '#5A3FA8';
+              mpBorder = 'rgba(132,90,250,0.45)';
+            }
+          }
 
           const razao = (precoPro != null && precoPonta && Number.isFinite(precoPonta) && precoPonta > 0)
             ? precoPro / precoPonta : 0;
@@ -2750,19 +3025,19 @@ const PricingDashboard = ({ user }) => {
           const skusDoCliente = clientId ? (markupPorCliente.get(clientId) || []) : [];
           const mostrarListaCliente = skusDoCliente.length > 1;
           let mediaMarkupCliente = null;
-          let qtdSkusComColeta = 0;
-          if (mostrarListaCliente) {
+          const qtdSkusComColeta = skusDoCliente.length;
+          if (mostrarListaCliente && qtdSkusComColeta > 0) {
             let soma = 0;
-            let n = 0;
             for (const s of skusDoCliente) {
-              if (Number.isFinite(s.markup) && s.markup > 0) {
-                soma += s.markup;
-                n += 1;
-              }
+              soma += Number(s.markup) || 0;
             }
-            qtdSkusComColeta = n;
-            if (n > 0) mediaMarkupCliente = soma / n;
+            mediaMarkupCliente = soma / qtdSkusComColeta;
           }
+
+          const maxMarkupBar = skusDoCliente.reduce(
+            (acc, s) => Math.max(acc, Number(s.markup) || 0),
+            0
+          );
 
           return (
           <div
@@ -2801,48 +3076,91 @@ const PricingDashboard = ({ user }) => {
               {/* Conteúdo com scroll */}
               <div className="flex-1 overflow-auto p-6 space-y-6">
                 {/* Três cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4">
-                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                      Preço PRO (bruto)
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
+                      Preço bruto praticado
                     </p>
-                    <p className="text-xl font-bold text-gray-900 dark:text-white">
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">
                       {formatCurrencyLocal(precoPro, moedaPro)}
                     </p>
                   </div>
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-4">
-                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                      Preço de ponta
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
+                      Preço de ponta (referência)
                     </p>
-                    <p className="text-xl font-bold text-gray-900 dark:text-white">
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">
                       {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : '-'}
                     </p>
                   </div>
                   <div
-                    className="rounded-lg border p-4"
+                    className="rounded-lg border p-3"
                     style={{
-                      borderColor: pal.border,
+                      borderColor: mpBorder,
                       borderWidth: '2px',
-                      backgroundColor: pillBg,
+                      backgroundColor: mpBg,
                     }}
                   >
                     <p
-                      className="text-xs font-medium uppercase tracking-wider mb-2"
-                      style={{ color: pillFg }}
+                      className="text-xs font-medium uppercase tracking-wider mb-1"
+                      style={{ color: mpFg }}
                     >
-                      Markup
+                      Markup de ponta
                     </p>
-                    <p className="text-2xl font-extrabold" style={{ color: pillFg }}>
-                      {formatMarkup(resultado.markup)}
+                    <p className="text-xl font-extrabold" style={{ color: mpFg }}>
+                      {markupPontaFormatado}
                     </p>
+                    {markupPontaForaFaixa && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: mpFg }}>
+                        <AlertCircle size={12} />
+                        Verificar unidade de embalagem
+                      </div>
+                    )}
+                    {moedasDivergentes && !markupPontaForaFaixa && (
+                      <div className="mt-1.5 text-[11px] font-semibold" style={{ color: mpFg }}>
+                        Conversão PTAX {String(PTAX).replace('.', ',')}
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Alertas de contexto */}
+                {(markupPontaForaFaixa || moedasDivergentes) && (
+                  <div className="space-y-2">
+                    {markupPontaForaFaixa && (
+                      <div className="rounded-lg border p-3 flex items-start gap-2" style={{
+                        borderColor: 'rgba(180,83,9,0.35)',
+                        backgroundColor: 'rgba(180,83,9,0.08)',
+                      }}>
+                        <AlertCircle size={16} style={{ color: '#B45309', marginTop: 2 }} />
+                        <div className="text-xs leading-snug" style={{ color: '#7C2D12' }}>
+                          <strong>Markup de ponta fora da faixa [1,5 ; 15].</strong>{' '}
+                          Este valor foi mantido no cálculo e não foi descartado. Verificar unidade de embalagem (ex.: preço de ponta por kg vs preço bruto praticado por unidade) antes de concluir.
+                        </div>
+                      </div>
+                    )}
+                    {moedasDivergentes && (
+                      <div className="rounded-lg border p-3 flex items-start gap-2" style={{
+                        borderColor: 'rgba(30,64,175,0.35)',
+                        backgroundColor: 'rgba(30,64,175,0.08)',
+                      }}>
+                        <DollarSign size={16} style={{ color: '#1D4ED8', marginTop: 2 }} />
+                        <div className="text-xs leading-snug" style={{ color: '#1E3A8A' }}>
+                          <strong>Moedas divergentes.</strong>{' '}
+                          Preço de ponta em <strong>{moedaPonta}</strong>, preço bruto praticado em <strong>{moedaPro}</strong>.
+                          Conversão aplicada no cálculo do markup de ponta: PTAX{' '}
+                          <strong>{String(PTAX).replace('.', ',')}</strong>. O valor convertido não é persistido.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Comparativo barras */}
                 <div className="space-y-3 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
                   <div>
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                      <span>Preço ponta</span>
+                      <span>Preço ponta (referência)</span>
                       <span className="font-medium text-gray-700 dark:text-gray-200">
                         {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : '-'}
                       </span>
@@ -2861,7 +3179,7 @@ const PricingDashboard = ({ user }) => {
                   </div>
                   <div>
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                      <span>Preço PRO</span>
+                      <span>Preço bruto praticado</span>
                       <span className="font-medium text-gray-700 dark:text-gray-200">
                         {formatCurrencyLocal(precoPro, moedaPro)}
                       </span>
@@ -2881,6 +3199,48 @@ const PricingDashboard = ({ user }) => {
                   </div>
                 </div>
 
+                {/* Coleta usada no cálculo */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                    Coleta usada no cálculo
+                  </h4>
+                  {coletaRef ? (
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-gray-50 dark:bg-gray-900/30">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                        <div>
+                          <p className="text-gray-500 dark:text-gray-400 mb-1">Canal</p>
+                          <p className="font-semibold text-gray-900 dark:text-white">{coletaRef.source}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500 dark:text-gray-400 mb-1">Preço</p>
+                          <p className="font-semibold text-gray-900 dark:text-white">
+                            {formatCurrencyLocal(Number(coletaRef.retail_price), coletaRef.currency || 'BRL')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500 dark:text-gray-400 mb-1">Data da coleta</p>
+                          <p className="font-semibold text-gray-900 dark:text-white">
+                            {!Number.isNaN(new Date(coletaRef.collected_at).getTime())
+                              ? format(new Date(coletaRef.collected_at), 'dd/MM/yyyy', { locale: ptBR })
+                              : '-'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500 dark:text-gray-400 mb-1">Nome no site</p>
+                          <p className="font-semibold text-gray-900 dark:text-white truncate">
+                            {coletaRef.nome_site || '-'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-4 text-xs text-gray-500 dark:text-gray-400">
+                      Nenhuma coleta no canal de referência (“{CANAL_REFERENCIA}”) foi encontrada para este SKU.
+                      Este SKU fica fora do agregado de markup de ponta e conta como sem cobertura.
+                    </div>
+                  )}
+                </div>
+
                 {/* Linha de contexto */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4">
@@ -2893,7 +3253,7 @@ const PricingDashboard = ({ user }) => {
                   </div>
                   <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4">
                     <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                      Participação PRO no preço final
+                      Participação do preço bruto no preço final
                     </p>
                     <p className="text-lg font-bold text-gray-900 dark:text-white">
                       {participacaoProPct != null
@@ -2913,56 +3273,57 @@ const PricingDashboard = ({ user }) => {
                       <p className="text-xs text-gray-600 dark:text-gray-400">
                         Média dos SKUs com coleta:{' '}
                         <span className="font-bold text-gray-900 dark:text-white">
-                          {formatMarkup(mediaMarkupCliente) || '-'}
+                          {formatarMarkupPonta(mediaMarkupCliente) || '-'}
                         </span>
                         {' · '}
                         <span className="font-medium">{qtdSkusComColeta}</span>
                         {' '}SKU{qtdSkusComColeta === 1 ? '' : 's'}
                       </p>
                     </div>
-                    <div className="space-y-2">
-                      {skusDoCliente
-                        .slice()
-                        .sort((a, b) => (b.markup || 0) - (a.markup || 0))
-                        .map((s) => {
-                          const isAberto = s.id === skuAtualDetail.id;
-                          const sp = getTierColor(s.tier);
-                          const barBg = sp.bg;
-                          const barFg = sp.fg;
-                          const largBarra = Math.min(100, ((s.markup || 0) / 8) * 100);
-                          return (
-                            <div
-                              key={s.id}
-                              className={`rounded-md p-3 border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/30 ${isAberto ? 'ring-1 ring-offset-1 ring-[#845AFA]/60' : 'opacity-70'}`}
-                            >
-                              <div className="flex items-center justify-between mb-1.5 gap-2">
-                                <div className="flex items-baseline gap-2 min-w-0">
-                                  <span className={`text-sm font-semibold truncate ${isAberto ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300'}`}>
-                                    {s.sku || 'SKU sem nome'}
-                                  </span>
-                                  <span className="text-[11px] text-gray-400 shrink-0">
-                                    {s.code || ''}
-                                  </span>
-                                </div>
-                                <span
-                                  className="text-sm font-bold shrink-0"
-                                  style={{ color: barFg }}
-                                >
-                                  {formatMarkup(s.markup)}
+                    <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
+                      {skusDoCliente.map((s) => {
+                        const isAberto = s.id === skuAtualDetail.id;
+                        const markVal = Number(s.markup) || 0;
+                        const largBarra = maxMarkupBar > 0
+                          ? Math.max(4, Math.min(100, (markVal / maxMarkupBar) * 100))
+                          : 0;
+                        return (
+                          <div
+                            key={s.id}
+                            className={`rounded-md p-3 bg-white dark:bg-gray-900/30 ${
+                              isAberto
+                                ? 'border-2 border-[#845AFA] ring-1 ring-offset-1 ring-[#845AFA]/40'
+                                : 'border border-gray-100 dark:border-gray-800 opacity-80'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5 gap-2">
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <span className={`text-sm font-semibold truncate ${isAberto ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300'}`}>
+                                  {s.sku || 'SKU sem nome'}
+                                </span>
+                                <span className="text-[11px] text-gray-400 shrink-0">
+                                  {s.code || ''}
                                 </span>
                               </div>
-                              <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: barBg }}>
-                                <div
-                                  className="h-full rounded-full"
-                                  style={{
-                                    width: `${largBarra}%`,
-                                    backgroundColor: barFg,
-                                  }}
-                                />
-                              </div>
+                              <span
+                                className="text-sm font-bold shrink-0"
+                                style={{ color: '#845AFA' }}
+                              >
+                                {formatarMarkupPonta(markVal)}
+                              </span>
                             </div>
-                          );
-                        })}
+                            <div className="w-full h-2 rounded-full overflow-hidden bg-purple-100/50 dark:bg-purple-900/20">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${largBarra}%`,
+                                  backgroundColor: '#845AFA',
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -2973,10 +3334,10 @@ const PricingDashboard = ({ user }) => {
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <div className="space-y-0.5">
                     <p className="text-gray-500 dark:text-gray-400">
-                      Data da coleta
+                      Data da coleta (referência)
                       <span className="ml-1 font-medium text-gray-700 dark:text-gray-200">
-                        {dataColeta && !Number.isNaN(new Date(dataColeta).getTime())
-                          ? format(new Date(dataColeta), 'dd/MM/yyyy', { locale: ptBR })
+                        {info.coletaReferenciaData && !Number.isNaN(info.coletaReferenciaData.getTime())
+                          ? format(info.coletaReferenciaData, 'dd/MM/yyyy', { locale: ptBR })
                           : '-'}
                       </span>
                       {info.proMaisRecente && (
@@ -2990,9 +3351,14 @@ const PricingDashboard = ({ user }) => {
                         </span>
                       )}
                     </p>
-                    {fonte && (
+                    {coletaRef && coletaRef.source && (
                       <p className="text-gray-500 dark:text-gray-400">
-                        Fonte: <span className="font-medium text-gray-700 dark:text-gray-200">{fonte}</span>
+                        Fonte (referência): <span className="font-medium text-gray-700 dark:text-gray-200">{coletaRef.source}</span>
+                      </p>
+                    )}
+                    {moedasDivergentes && (
+                      <p className="text-gray-500 dark:text-gray-400">
+                        PTAX aplicada: <span className="font-medium text-gray-700 dark:text-gray-200">{String(PTAX).replace('.', ',')}</span>
                       </p>
                     )}
                   </div>
