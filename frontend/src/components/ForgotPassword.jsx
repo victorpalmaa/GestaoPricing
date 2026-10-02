@@ -17,9 +17,7 @@ const ForgotPassword = () => {
     setMessage('');
     setLoading(true);
     try {
-      const redirect = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_REDIRECT_URL)
-        || `${window.location.origin}/update-password`;
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirect });
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/update-password` });
       if (resetError) {
         console.error('Reset password error:', resetError);
         let msg = resetError.message || 'Não foi possível enviar o e-mail.';
