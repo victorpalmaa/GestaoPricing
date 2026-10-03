@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/utils';
 
 const UpdatePassword = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [resetComplete, setResetComplete] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -21,8 +22,6 @@ const UpdatePassword = () => {
         const code = url.searchParams.get('code');
         const tokenHash = url.searchParams.get('token_hash') || url.searchParams.get('token');
         const type = url.searchParams.get('type') || 'recovery';
-        const em = url.searchParams.get('email') || '';
-        if (em) setEmail(em);
 
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -53,6 +52,10 @@ const UpdatePassword = () => {
     e.preventDefault();
     setError('');
     setMessage('');
+    if (password !== confirmPassword) {
+      setError('As senhas não coincidem.');
+      return;
+    }
     setLoading(true);
     try {
       const { error: updateError } = await supabase.auth.updateUser({ password });
@@ -92,24 +95,6 @@ const UpdatePassword = () => {
             {!resetComplete ? (
               <>
                 <div>
-                  <label htmlFor="email" className="label-pronutrition">E-mail</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Mail size={20} style={{ color: 'var(--color-text-muted)' }} />
-                    </div>
-                    <input
-                      id="email"
-                      type="email"
-                      className="input-pronutrition pl-10"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="seu.email@pronutrition.com.br"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
                   <label htmlFor="password" className="label-pronutrition">Nova senha</label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -131,6 +116,32 @@ const UpdatePassword = () => {
                       style={{ color: 'var(--color-text-muted)' }}
                     >
                       {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="confirmPassword" className="label-pronutrition">Confirmar senha</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Lock size={20} style={{ color: 'var(--color-text-muted)' }} />
+                    </div>
+                    <input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      className="input-pronutrition pl-10 pr-10"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                     </button>
                   </div>
                 </div>
