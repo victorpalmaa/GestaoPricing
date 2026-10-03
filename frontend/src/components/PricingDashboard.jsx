@@ -701,8 +701,10 @@ const PricingDashboard = ({ user }) => {
         coletaReferencia: null,
         coletasDoSku: [],
         coletaReferenciaData: null,
+        precoNaoVigente: false,
       };
       if (!item.isCurrent) {
+        semPontaEntrada.precoNaoVigente = true;
         m.set(item.id, semPontaEntrada);
         continue;
       }
@@ -765,6 +767,7 @@ const PricingDashboard = ({ user }) => {
         coletaReferencia,
         coletasDoSku,
         coletaReferenciaData,
+        precoNaoVigente: false,
       });
     }
     return m;
@@ -2965,8 +2968,10 @@ const PricingDashboard = ({ user }) => {
             coletaReferencia: null,
             coletasDoSku: [],
             coletaReferenciaData: null,
+            precoNaoVigente: false,
           };
           const info = markupPorLinha.get(skuAtualDetail.id) || infoFallback;
+          const naoVigenteModal = Boolean(info.precoNaoVigente);
           const resultado = info.resultado || infoFallback.resultado;
           const precoPro = Number(skuAtualDetail.gross_price);
           const moedaPro = skuAtualDetail.currency || 'BRL';
@@ -3087,39 +3092,60 @@ const PricingDashboard = ({ user }) => {
                       {precoPonta != null ? formatCurrencyLocal(precoPonta, moedaPonta) : '-'}
                     </p>
                   </div>
-                  <div
-                    className="rounded-lg border p-3"
-                    style={{
-                      borderColor: mpBorder,
-                      borderWidth: '2px',
-                      backgroundColor: mpBg,
-                    }}
-                  >
-                    <p
-                      className="text-xs font-medium uppercase tracking-wider mb-1"
-                      style={{ color: mpFg }}
+                  {naoVigenteModal ? (
+                    <div
+                      className="rounded-lg border p-3"
+                      style={{
+                        borderColor: 'rgba(180,83,9,0.45)',
+                        borderWidth: '2px',
+                        backgroundColor: 'rgba(180,83,9,0.08)',
+                      }}
                     >
-                      Markup de ponta
-                    </p>
-                    <p className="text-xl font-extrabold" style={{ color: mpFg }}>
-                      {markupPontaFormatado}
-                    </p>
-                    {markupPontaForaFaixa && (
-                      <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: mpFg }}>
-                        <AlertCircle size={12} />
-                        Verificar unidade de embalagem
-                      </div>
-                    )}
-                    {moedasDivergentes && !markupPontaForaFaixa && (
-                      <div className="mt-1.5 text-[11px] font-semibold" style={{ color: mpFg }}>
-                        Conversão PTAX {String(PTAX).replace('.', ',')}
-                      </div>
-                    )}
-                  </div>
+                      <p
+                        className="text-xs font-medium uppercase tracking-wider mb-1"
+                        style={{ color: '#B45309' }}
+                      >
+                        Markup de ponta
+                      </p>
+                      <p className="text-sm font-bold leading-snug" style={{ color: '#7C2D12' }}>
+                        Preço não vigente: markup não calculado
+                      </p>
+                    </div>
+                  ) : (
+                    <div
+                      className="rounded-lg border p-3"
+                      style={{
+                        borderColor: mpBorder,
+                        borderWidth: '2px',
+                        backgroundColor: mpBg,
+                      }}
+                    >
+                      <p
+                        className="text-xs font-medium uppercase tracking-wider mb-1"
+                        style={{ color: mpFg }}
+                      >
+                        Markup de ponta
+                      </p>
+                      <p className="text-xl font-extrabold" style={{ color: mpFg }}>
+                        {markupPontaFormatado}
+                      </p>
+                      {markupPontaForaFaixa && (
+                        <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: mpFg }}>
+                          <AlertCircle size={12} />
+                          Verificar unidade de embalagem
+                        </div>
+                      )}
+                      {moedasDivergentes && !markupPontaForaFaixa && (
+                        <div className="mt-1.5 text-[11px] font-semibold" style={{ color: mpFg }}>
+                          Conversão PTAX {String(PTAX).replace('.', ',')}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Alertas de contexto */}
-                {(markupPontaForaFaixa || moedasDivergentes) && (
+                {!naoVigenteModal && (markupPontaForaFaixa || moedasDivergentes) && (
                   <div className="space-y-2">
                     {markupPontaForaFaixa && (
                       <div className="rounded-lg border p-3 flex items-start gap-2" style={{
