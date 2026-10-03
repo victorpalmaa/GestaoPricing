@@ -78,7 +78,6 @@ O projeto usa estas variáveis no frontend:
 
 - `VITE_SUPABASE_URL`: URL do projeto Supabase usada pelo cliente web
 - `VITE_SUPABASE_ANON_KEY`: chave pública anônima usada para autenticação e acesso ao banco via Supabase
-- `VITE_SUPABASE_REDIRECT_URL`: URL de retorno usada no fluxo de redefinição de senha
 
 ## Áreas e permissões
 
