@@ -1,0 +1,12 @@
+{
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "strict": true
+  },
+  "tasks": {
+    "check": "deno check index.ts"
+  },
+  "imports": {
+    "zod": "npm:zod@4.6.2"
+  }
+}

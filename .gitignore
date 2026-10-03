@@ -38,6 +38,7 @@ dist
 .env.*
 **/.env
 **/.env.*
+supabase/functions/.env
 frontend/.env.local
 backend/.env
 
