@@ -64,7 +64,8 @@ chainlit.md
 .chainlit
 .ipynb_checkpoints/
 .ac
-.trae/
+.trae/*
+!.trae/specs/
 
 # Python caches
 .pytest_cache/
