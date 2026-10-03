@@ -286,16 +286,16 @@ export function prepararLote({
 
     return {
       linhaArquivo,
-      clienteNome: clienteNome == null ? null : String(clienteNome),
+      clienteNome: clienteNome == null ? null : String(clienteNome).trim(),
       clientId,
       nomeSite: nomeSite == null ? null : String(nomeSite),
       datasulCodeInformado:
-        datasulCodeInformado == null ? null : String(datasulCodeInformado),
+        datasulCodeInformado == null ? null : String(datasulCodeInformado).trim(),
       precoPonta: Number.isFinite(precoPonta) && precoPonta > 0 ? precoPonta : null,
       moeda,
       dataColeta,
       dataColetaBr: formatarDataColetaBr(dataColeta),
-      fonte: fonte == null || String(fonte).trim() === '' ? null : String(fonte),
+      fonte: fonte == null || String(fonte).trim() === '' ? null : String(fonte).trim(),
       vinculo,
       errosLinha,
       avisosLinha,
