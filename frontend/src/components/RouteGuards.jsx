@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth, useAuthController } from "@/contexts/AuthContext";
 import AcessoNegado from "./AcessoNegado";
 import AcessoPendente from "./AcessoPendente";
@@ -19,9 +19,10 @@ const AuthLoadingScreen = () => (
   </div>
 );
 
-export function RequireAuth({ children }) {
+export function RequireAuth({ children, preserveRedirect = false }) {
   const { user, loading, authError } = useAuth();
   const { retryAuth } = useAuthController();
+  const location = useLocation();
 
   if (loading) {
     return <AuthLoadingScreen />;
@@ -32,6 +33,10 @@ export function RequireAuth({ children }) {
   }
 
   if (!user) {
+    if (preserveRedirect) {
+      const from = location.pathname + location.search + location.hash;
+      return <Navigate to="/login" replace state={{ from }} />;
+    }
     return <Navigate to="/login" replace />;
   }
 

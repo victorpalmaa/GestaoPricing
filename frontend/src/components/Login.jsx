@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/utils';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const Login = ({ setUser }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -13,6 +14,14 @@ const Login = ({ setUser }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const getPostLoginRedirect = () => {
+    const from = location.state?.from;
+    if (typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')) {
+      return from;
+    }
+    return '/select';
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -59,7 +68,7 @@ const Login = ({ setUser }) => {
         localStorage.removeItem('pronutrition_user');
         localStorage.removeItem('pronutrition_token');
       }
-      navigate('/select');
+      navigate(getPostLoginRedirect(), { replace: true });
     } catch (err) {
       console.error('Login exception:', err);
       setError(err.message || 'Erro de conexão ou serviço indisponível.');

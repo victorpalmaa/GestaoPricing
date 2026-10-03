@@ -12,6 +12,7 @@ import CatalogoPro from "./components/CatalogoPro";
 import Combos2026 from "./components/Combos2026";
 import ForgotPassword from "./components/ForgotPassword";
 import UpdatePassword from "./components/UpdatePassword";
+import OAuthConsent from "./components/OAuthConsent";
 import { RequireAuth, RequireArea } from "./components/RouteGuards";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider, useAuth, useAuthController } from "@/contexts/AuthContext";
@@ -34,6 +35,16 @@ function AppRoutes() {
         <Route
           path="/cadastro"
           element={user ? <Navigate to="/select" /> : <Cadastro setUser={setAuthUser} />}
+        />
+        <Route
+          path="/oauth/consent"
+          element={(
+            <RequireAuth preserveRedirect={true}>
+              <RequireArea areas={getAllowedAreasForRoute("/oauth/consent")}>
+                <OAuthConsent />
+              </RequireArea>
+            </RequireAuth>
+          )}
         />
         <Route
           path="/select"

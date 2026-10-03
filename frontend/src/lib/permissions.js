@@ -2,6 +2,10 @@ import { useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 
 export const ROUTE_PERMISSIONS = {
+  "/oauth/consent": {
+    allowedAreas: ["Pricing", "Pré-vendas", "CS"],
+    writeAreas: ["Pricing", "Pré-vendas", "CS"],
+  },
   "/pricing/dashboard": {
     allowedAreas: ["Pricing", "Pré-vendas", "CS"],
     writeAreas: ["Pricing"],
