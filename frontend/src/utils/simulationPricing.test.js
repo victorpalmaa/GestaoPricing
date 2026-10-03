@@ -23,6 +23,27 @@ describe('simulationPricing', () => {
     expect(formatMarginPercentInputValue(0.27)).toBe('27.00');
   });
 
+  describe('normalizeMarginPercentInput regra unica (abs < 1)', () => {
+    it('0.35 -> 35', () => {
+      expect(normalizeMarginPercentInput(0.35)).toBe(35);
+    });
+    it('35 -> 35', () => {
+      expect(normalizeMarginPercentInput(35)).toBe(35);
+    });
+    it('1 -> 1 (regra abs < 1, nao converte)', () => {
+      expect(normalizeMarginPercentInput(1)).toBe(1);
+    });
+    it('0 -> 0', () => {
+      expect(normalizeMarginPercentInput(0)).toBe(0);
+    });
+    it('-0.05 -> -5', () => {
+      expect(normalizeMarginPercentInput(-0.05)).toBe(-5);
+    });
+    it('0.999 -> 99.9', () => {
+      expect(normalizeMarginPercentInput(0.999)).toBeCloseTo(99.9, 10);
+    });
+  });
+
   it('reproduz o caso reportado do Balance Pro: custo 29,95, 23% -> 49,62', () => {
     const result = solveDisplayedPriceByMargin({
       custoTotal: 29.95,

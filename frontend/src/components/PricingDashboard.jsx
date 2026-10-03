@@ -48,6 +48,7 @@ import {
   MARKUP_STATUS,
   resolveMarkupTier,
 } from '../utils/markup';
+import { normalizeMarginPercentInput } from '../utils/simulationPricing';
 import {
   calcularMarkupPonta,
   formatarMarkupPonta,
@@ -976,15 +977,8 @@ const PricingDashboard = ({ user }) => {
             const netPrice = parseNumber(row['net_price']);
             const grossPrice = parseNumber(row['gross_price']);
             let marginBudget = parseNumber(row['margin_budget']);
-            
-            // Correção automática para porcentagens vindas do Excel
-            // Se o valor for menor ou igual a 1 (ex: 0.3), assume que é decimal e multiplica por 100 para virar 30(%)
-            // Exceto se for exatamente 0 ou negativo (pode ser margem zero ou negativa, mas 0.3 é claramente 30%)
-            // Se o usuário digitou 30 no Excel, vem 30. Se digitou 30%, vem 0.3.
-            if (marginBudget !== null && !isNaN(marginBudget)) {
-               if (Math.abs(marginBudget) <= 1 && marginBudget !== 0) {
-                 marginBudget = marginBudget * 100;
-               }
+            if (marginBudget != null && !isNaN(marginBudget)) {
+              marginBudget = normalizeMarginPercentInput(marginBudget);
             }
             
             if (isNaN(netPrice) || netPrice <= 0) {
