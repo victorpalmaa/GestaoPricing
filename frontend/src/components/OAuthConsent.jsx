@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, CheckCircle2, Loader2 } from "lucide-react";
+import { getAreaLabel } from "@/lib/areaLabels";
 
 const LoadingState = () => (
   <div className="flex flex-col items-center justify-center py-8">
@@ -165,7 +166,7 @@ const OAuthConsent = () => {
   const clientName = details?.client?.name || "Aplicativo externo";
   const redirectUri = details?.redirect_uri || "";
   const email = user?.email || "";
-  const userArea = area || "Não definida";
+  const userAreaDisplay = area ? getAreaLabel(area) : "Não definida";
 
   return (
     <div
@@ -214,11 +215,11 @@ const OAuthConsent = () => {
                       Área no portal
                     </span>
                     <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
-                      {userArea}
+                      {userAreaDisplay}
                     </span>
                   </div>
                   <p className="text-xs pt-2" style={{ color: "var(--color-text-secondary)" }}>
-                    As permissões serão as mesmas da sua área no portal: {userArea}
+                    As permissões serão as mesmas da sua área no portal: {userAreaDisplay}
                   </p>
                 </div>
 

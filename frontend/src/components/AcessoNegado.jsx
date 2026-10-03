@@ -29,7 +29,7 @@ const AcessoNegado = ({ user }) => {
             </h1>
             <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
               A área da sua conta não tem permissão para acessar este módulo. Se você acredita
-              que isso está incorreto, procure a área de Pricing.
+              que isso está incorreto, procure a área de Data.
             </p>
 
             <div className="mt-8">

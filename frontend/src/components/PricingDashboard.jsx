@@ -1336,7 +1336,7 @@ const PricingDashboard = ({ user }) => {
 
   const handleDeleteClick = (item) => {
     if (!isSuper) {
-        toast.error('Apenas usuários do time de Pricing podem excluir registros.');
+        toast.error('Apenas usuários do time de Data podem excluir registros.');
         return;
     }
     setItemToDelete(item);
