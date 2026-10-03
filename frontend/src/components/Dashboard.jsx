@@ -31,6 +31,51 @@ import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/utils';
 import { toast } from 'sonner';
 import { logExport } from '@/utils/activityLog';
+import { montarPayloadPreco, validarMacoPct } from '../lib/pricing/montarPayloadPreco';
+
+const CLIENTS_PAGE_SIZE = 1000;
+
+const normalizeLookupValue = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const loadAllRows = async (tableName, selectClause, orderColumn) => {
+  let rows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + CLIENTS_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from(tableName)
+      .select(selectClause)
+      .order(orderColumn, { ascending: true })
+      .range(from, to);
+
+    if (error) throw error;
+
+    const batch = data || [];
+    rows = rows.concat(batch);
+
+    if (batch.length < CLIENTS_PAGE_SIZE) {
+      break;
+    }
+
+    from += CLIENTS_PAGE_SIZE;
+  }
+
+  return rows;
+};
+
+const loadAllClients = async () => {
+  return loadAllRows('clients', 'id, name', 'name');
+};
+
+const loadAllClientAliases = async () => {
+  return loadAllRows('client_aliases', 'id, alias, canonical_name', 'alias');
+};
 
 const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true, canDelete: true }, title = 'Leads' }) => {
   const navigate = useNavigate();
@@ -42,11 +87,31 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [precoBrutoFilter, setPrecoBrutoFilter] = useState('');
   const [margemBrutaFilter, setMargemBrutaFilter] = useState('');
   const [originFilter, setOriginFilter] = useState('');
+  const [clients, setClients] = useState([]);
+  const [clientAliases, setClientAliases] = useState([]);
 
   const clientOptions = useMemo(() => {
     const uniqueClients = [...new Set(leads.map(lead => lead.cliente))].filter(Boolean).sort();
     return uniqueClients.map(client => ({ label: client, value: client }));
   }, [leads]);
+
+  const clientBaseOptions = useMemo(() => {
+    const canonicalFromAliases = new Map();
+    for (const a of clientAliases || []) {
+      if (!a || !a.alias || !a.canonical_name) continue;
+      canonicalFromAliases.set(String(a.alias).trim(), String(a.canonical_name).trim());
+    }
+    const canonicalByName = new Map();
+    for (const c of clients || []) {
+      if (!c || !c.name) continue;
+      canonicalByName.set(String(c.name).trim(), String(c.name).trim());
+    }
+    const merged = new Map();
+    for (const [, v] of canonicalByName) merged.set(v, v);
+    for (const [, v] of canonicalFromAliases) merged.set(v, v);
+    const list = Array.from(merged.keys()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return list.map(n => ({ label: n, value: n }));
+  }, [clients, clientAliases]);
 
   const skuOptions = useMemo(() => {
     let data = leads;
@@ -88,6 +153,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [initialLoading, setInitialLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [basePriceId, setBasePriceId] = useState('');
+  const [modoMercado, setModoMercado] = useState('nacional');
 
   // Prepare options for base price selection
   const basePriceOptions = useMemo(() => {
@@ -101,6 +167,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     setBasePriceId(value);
     const selectedPrice = leads.find(l => l.id === value);
     if (selectedPrice) {
+      setModoMercado(selectedPrice.mercado === 'exportacao' ? 'exportacao' : 'nacional');
       setFormData(prev => ({
         ...prev,
         cliente: selectedPrice.cliente,
@@ -110,6 +177,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         pricingId: selectedPrice.pricingId,
         precoLiquido: selectedPrice.precoLiquido,
         precoBruto: selectedPrice.precoBruto,
+        precoBRL: selectedPrice.mercado === 'exportacao' ? (selectedPrice.precoBruto ?? '') : '',
+        precoUSD: selectedPrice.precoUSD ?? '',
+        ptax: selectedPrice.ptax ?? '',
+        macoPct: selectedPrice.macoPct ?? '',
         margemBruta: selectedPrice.margemBruta,
         volume: selectedPrice.volume,
         status: 'em_aberto', // Reset status for new entry
@@ -130,6 +201,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     pricingId: '',
     precoLiquido: '',
     precoBruto: '',
+    precoBRL: '',
+    precoUSD: '',
+    ptax: '',
+    macoPct: '',
     margemBruta: '',
     volume: '',
     status: 'em_aberto',
@@ -154,10 +229,21 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   useEffect(() => {
     (async () => {
       setInitialLoading(true);
-      const { data, error } = await supabase
-        .from('prices')
-        .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag')
-        .order('createdat', { ascending: false });
+      const [
+        pricesRes,
+        clientsRes,
+        aliasesRes,
+      ] = await Promise.all([
+        supabase
+          .from('prices')
+          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, maco_pct, volume, status, createdat, origin_type, origin_tag, mercado, preco_usd, ptax')
+          .order('createdat', { ascending: false }),
+        loadAllClients().catch(() => []),
+        loadAllClientAliases().catch(() => []),
+      ]);
+      setClients(clientsRes || []);
+      setClientAliases(aliasesRes || []);
+      const { data, error } = pricesRes;
       if (error) {
         setLeads([]);
         setFilteredLeads([]);
@@ -173,11 +259,15 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           precoLiquido: r.precoliquido,
           precoBruto: r.precobruto,
           margemBruta: r.margembruta,
+          macoPct: r.maco_pct,
           volume: r.volume,
           status: r.status,
           createdAt: r.createdat,
           originType: r.origin_type || '',
-          originTag: r.origin_tag || ''
+          originTag: r.origin_tag || '',
+          mercado: r.mercado || 'nacional',
+          precoUSD: r.preco_usd,
+          ptax: r.ptax,
         }));
         setLeads(mapped);
         setFilteredLeads(mapped);
@@ -269,6 +359,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     }
     if (lead) {
       setEditingLead(lead);
+      setModoMercado(lead.mercado === 'exportacao' ? 'exportacao' : 'nacional');
       setFormData({
         cliente: lead.cliente,
         sku: lead.sku,
@@ -277,6 +368,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         pricingId: lead.pricingId || '',
         precoLiquido: lead.precoLiquido,
         precoBruto: lead.precoBruto,
+        precoBRL: lead.mercado === 'exportacao' ? (lead.precoBruto ?? '') : '',
+        precoUSD: lead.precoUSD ?? '',
+        ptax: lead.ptax ?? '',
+        macoPct: lead.macoPct ?? '',
         margemBruta: lead.margemBruta,
         volume: lead.volume,
         status: lead.status || 'em_aberto',
@@ -284,6 +379,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       });
     } else {
       setEditingLead(null);
+      setModoMercado('nacional');
       setFormData({
         cliente: '',
         sku: '',
@@ -292,6 +388,10 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
         pricingId: '',
         precoLiquido: '',
         precoBruto: '',
+        precoBRL: '',
+        precoUSD: '',
+        ptax: '',
+        macoPct: '',
         margemBruta: '',
         volume: '',
         status: 'em_aberto',
@@ -305,6 +405,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     setIsModalOpen(false);
     setEditingLead(null);
     setBasePriceId('');
+    setModoMercado('nacional');
   };
 
   const handleSubmit = (e) => {
@@ -319,59 +420,110 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       return;
     }
 
+    // Validações específicas
+    if (modoMercado === 'exportacao') {
+      const brlNum = Number(String(formData.precoBRL || '').replace(',', '.'));
+      const usdNum = Number(String(formData.precoUSD || '').replace(',', '.'));
+      const ptaxNum = Number(String(formData.ptax || '').replace(',', '.'));
+      if (!brlNum || brlNum <= 0 || !Number.isFinite(brlNum)) {
+        toast.error('Preço BRL deve ser maior que 0.');
+        return;
+      }
+      if (!usdNum || usdNum <= 0 || !Number.isFinite(usdNum)) {
+        toast.error('Preço USD deve ser maior que 0.');
+        return;
+      }
+      if (!ptaxNum || ptaxNum <= 0 || !Number.isFinite(ptaxNum)) {
+        toast.error('PTAX deve ser maior que 0.');
+        return;
+      }
+    }
+
+    if (formData.originType === 'novo_sku' && !formData.cliente) {
+      toast.error('Selecione um cliente (obrigatório para a origem Novos SKUs na base).');
+      return;
+    }
+
+    const isEditSemMacoAnterior = isEdit && (editingLead?.macoPct === null || editingLead?.macoPct === undefined);
+    const validacaoMaco = validarMacoPct(formData.macoPct, isEditSemMacoAnterior);
+    if (!validacaoMaco.valido) {
+      toast.error(validacaoMaco.erro);
+      return;
+    }
+
     setIsSubmitting(true);
-    
-    const leadData = {
-      ...formData,
-      precoLiquido: parseFloat(formData.precoLiquido),
-      precoBruto: parseFloat(formData.precoBruto),
-      margemBruta: parseFloat(formData.margemBruta),
-      volume: parseInt(formData.volume),
-      status: formData.status,
+
+    const payload = montarPayloadPreco({
+      modo: modoMercado,
+      cliente: formData.cliente,
+      sku: formData.sku,
       category: formData.category,
       subcategory: formData.subcategory,
-      originType: formData.originType || ''
+      pricingId: formData.pricingId,
+      precoLiquido: formData.precoLiquido,
+      precoBruto: formData.precoBruto,
+      precoBRL: formData.precoBRL,
+      precoUSD: formData.precoUSD,
+      ptax: formData.ptax,
+      margemBruta: formData.margemBruta,
+      macoPct: formData.macoPct,
+      volume: formData.volume,
+      status: formData.status,
+      originType: formData.originType,
+    });
+
+    const SELECT_COLUMNS = 'id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, maco_pct, volume, status, createdat, origin_type, origin_tag, mercado, preco_usd, ptax';
+    const mapRow = (r) => ({
+      id: r.id,
+      cliente: r.cliente,
+      sku: r.sku,
+      category: r.category,
+      subcategory: r.subcategory,
+      pricingId: r.pricingid,
+      precoLiquido: r.precoliquido,
+      precoBruto: r.precobruto,
+      margemBruta: r.margembruta,
+      macoPct: r.maco_pct,
+      volume: r.volume,
+      status: r.status,
+      createdAt: r.createdat,
+      originType: r.origin_type || '',
+      originTag: r.origin_tag || '',
+      mercado: r.mercado || 'nacional',
+      precoUSD: r.preco_usd,
+      ptax: r.ptax,
+    });
+
+    const saveDb = {
+      cliente: payload.cliente,
+      sku: payload.sku,
+      category: payload.category,
+      subcategory: payload.subcategory,
+      pricingid: payload.pricingid,
+      precoliquido: payload.precoliquido,
+      precobruto: payload.precobruto,
+      margembruta: payload.margembruta,
+      maco_pct: payload.maco_pct,
+      volume: payload.volume,
+      status: payload.status,
+      origin_type: payload.origin_type,
+      mercado: payload.mercado,
+      preco_usd: payload.preco_usd,
+      ptax: payload.ptax,
     };
 
     if (editingLead) {
       (async () => {
         const { data: updatedRows, error } = await supabase
           .from('prices')
-          .update({
-            cliente: leadData.cliente,
-            sku: leadData.sku,
-            category: leadData.category,
-            subcategory: leadData.subcategory,
-            pricingid: leadData.pricingId,
-            precoliquido: leadData.precoLiquido,
-            precobruto: leadData.precoBruto,
-            margembruta: leadData.margemBruta,
-            volume: leadData.volume,
-            status: leadData.status,
-            origin_type: leadData.originType || null
-          })
+          .update(saveDb)
           .eq('id', editingLead.id)
-          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag');
+          .select(SELECT_COLUMNS);
         if (error) {
           toast.error('Falha ao atualizar');
         } else {
           const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
-          const updated = {
-            id: r.id,
-            cliente: r.cliente,
-            sku: r.sku,
-            category: r.category,
-            subcategory: r.subcategory,
-            pricingId: r.pricingid,
-            precoLiquido: r.precoliquido,
-            precoBruto: r.precobruto,
-            margemBruta: r.margembruta,
-            volume: r.volume,
-            status: r.status,
-            createdAt: r.createdat,
-            originType: r.origin_type || '',
-            originTag: r.origin_tag || ''
-          };
+          const updated = mapRow(r);
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
           toast.success('Lead atualizado');
         }
@@ -380,42 +532,13 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       (async () => {
         const { data: insertedRows, error } = await supabase
           .from('prices')
-          .insert([
-            {
-              cliente: leadData.cliente,
-              sku: leadData.sku,
-              category: leadData.category,
-              subcategory: leadData.subcategory,
-              pricingid: leadData.pricingId,
-              precoliquido: leadData.precoLiquido,
-              precobruto: leadData.precoBruto,
-              margembruta: leadData.margemBruta,
-              volume: leadData.volume,
-              status: leadData.status,
-              origin_type: leadData.originType || null
-            }
-          ])
-          .select('id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, volume, status, createdat, origin_type, origin_tag');
+          .insert([saveDb])
+          .select(SELECT_COLUMNS);
         if (error) {
           toast.error('Falha ao adicionar');
         } else {
           const r = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
-          const newLead = {
-            id: r.id,
-            cliente: r.cliente,
-            sku: r.sku,
-            category: r.category,
-            subcategory: r.subcategory,
-            pricingId: r.pricingid,
-            precoLiquido: r.precoliquido,
-            precoBruto: r.precobruto,
-            margemBruta: r.margembruta,
-            volume: r.volume,
-            status: r.status,
-            createdAt: r.createdat,
-            originType: r.origin_type || '',
-            originTag: r.origin_tag || ''
-          };
+          const newLead = mapRow(r);
           setLeads([newLead, ...leads]);
           setShowMoney(true);
           setTimeout(() => setShowMoney(false), 3000);
@@ -1099,6 +1222,9 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   <th className="px-4 py-3 text-right text-xs font-bold text-gray-700 dark:text-gray-200 whitespace-nowrap">
                     Preço Bruto
                   </th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                    MACO %
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">
                     MB (%)
                   </th>
@@ -1119,7 +1245,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
               <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan="10" className="px-6 py-12 text-center">
+                    <td colSpan="11" className="px-6 py-12 text-center">
                       <p className="text-gray-500 dark:text-gray-400">
                         {(clientFilter || skuFilter) ? 'Nenhum resultado encontrado' : 'Nenhum preço cadastrado ainda'}
                       </p>
@@ -1145,10 +1271,31 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-[13px] text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        R$ {lead.precoLiquido.toFixed(2)}
+                        {lead.mercado === 'exportacao' ? (
+                          <span>R$ {Number(lead.precoLiquido ?? 0).toFixed(2)}</span>
+                        ) : (
+                          <span>R$ {Number(lead.precoLiquido ?? 0).toFixed(2)}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right text-[13px] font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
-                        R$ {lead.precoBruto.toFixed(2)}
+                        {lead.mercado === 'exportacao' ? (
+                          <span>US$ {Number(lead.precoUSD ?? 0).toFixed(2)}</span>
+                        ) : (
+                          <span>R$ {Number(lead.precoBruto ?? 0).toFixed(2)}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {lead.macoPct === null || lead.macoPct === undefined || lead.macoPct === '' ? (
+                          <span className="text-gray-400 dark:text-gray-500">-</span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-semibold"
+                                style={{ 
+                                  backgroundColor: 'rgba(156, 163, 175, 0.15)',
+                                  color: 'var(--color-muted-foreground, inherit)'
+                                }}>
+                            {Number(lead.macoPct).toFixed(1)}%
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="px-2.5 py-1 rounded-lg text-xs font-semibold"
@@ -1384,226 +1531,346 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
                   </div>
                 )}
 
+                {/* Modo Mercado */}
+                <div>
+                  <label className="label-pronutrition dark:text-gray-300">
+                    Mercado
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModoMercado('nacional')}
+                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        modoMercado === 'nacional'
+                          ? 'bg-blue-500 text-white border-blue-500'
+                          : 'bg-white dark:bg-[#0a0a0a] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                      }`}
+                    >
+                      Nacional
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModoMercado('exportacao')}
+                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                        modoMercado === 'exportacao'
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-[#0a0a0a] text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                      }`}
+                    >
+                      Exportação
+                    </button>
+                  </div>
+                </div>
+
                 {/* Cliente */}
                 <div>
                   <label htmlFor="cliente" className="label-pronutrition dark:text-gray-300">
                     Nome do Cliente
                   </label>
-                <input
-                  id="cliente"
-                  name="cliente"
-                  type="text"
-                  required
-                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                  style={{ padding: '0.75rem' }}
-                  placeholder="Ex: Farmácia São Paulo LTDA"
-                  value={formData.cliente}
-                  onChange={handleChange}
-                />
-              </div>
+                  {formData.originType === 'novo_sku' ? (
+                    <SearchableSelect
+                      options={clientBaseOptions}
+                      value={formData.cliente}
+                      onChange={(val) => setFormData(prev => ({ ...prev, cliente: val ?? '' }))}
+                      placeholder="Selecione um cliente da base..."
+                      searchPlaceholder="Buscar cliente..."
+                      className="dark:bg-[#0a0a0a]"
+                    />
+                  ) : (
+                    <input
+                      id="cliente"
+                      name="cliente"
+                      type="text"
+                      required
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      placeholder="Ex: Farmácia São Paulo LTDA"
+                      value={formData.cliente}
+                      onChange={handleChange}
+                    />
+                  )}
+                </div>
 
-              {/* SKU */}
-              <div>
-                <label htmlFor="sku" className="label-pronutrition dark:text-gray-300">
-                  SKU
-                </label>
-                <input
-                  id="sku"
-                  name="sku"
-                  type="text"
-                  required
-                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                  style={{ padding: '0.75rem' }}
-                  placeholder="Ex: PRO-WHEY-1KG"
-                  value={formData.sku}
-                  onChange={handleChange}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+                {/* SKU */}
                 <div>
-                  <label className="label-pronutrition dark:text-gray-300">
-                    Origem do Projeto
+                  <label htmlFor="sku" className="label-pronutrition dark:text-gray-300">
+                    SKU
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_cliente' }))}
-                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
-                        formData.originType === 'novo_cliente'
-                          ? 'bg-blue-500 text-white border-blue-500'
-                          : 'bg-white dark:bg-[#0a0a0a] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20'
-                      }`}
-                    >
-                      Novos clientes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_sku' }))}
-                      className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
-                        formData.originType === 'novo_sku'
-                          ? 'bg-purple-600 text-white border-purple-600'
-                          : 'bg-white dark:bg-[#0a0a0a] text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20'
-                      }`}
-                    >
-                      Novos SKUs base
-                    </button>
+                  <input
+                    id="sku"
+                    name="sku"
+                    type="text"
+                    required
+                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                    style={{ padding: '0.75rem' }}
+                    placeholder="Ex: PRO-WHEY-1KG"
+                    value={formData.sku}
+                    onChange={handleChange}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="label-pronutrition dark:text-gray-300">
+                      Origem do Projeto
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_cliente' }))}
+                        className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                          formData.originType === 'novo_cliente'
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-white dark:bg-[#0a0a0a] text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                        }`}
+                      >
+                        Novos clientes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, originType: 'novo_sku' }))}
+                        className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-all ${
+                          formData.originType === 'novo_sku'
+                            ? 'bg-purple-600 text-white border-purple-600'
+                            : 'bg-white dark:bg-[#0a0a0a] text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20'
+                        }`}
+                      >
+                        Novos SKUs base
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Categoria */}
-              <div className="grid grid-cols-2 gap-4">
+                {/* Categoria */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="category" className="label-pronutrition dark:text-gray-300">
+                      Categoria
+                    </label>
+                    <select
+                      id="category"
+                      name="category"
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      value={formData.category}
+                      onChange={handleChange}
+                    >
+                      <option value="">Selecione...</option>
+                      {CATEGORY_OPTIONS.map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="subcategory" className="label-pronutrition dark:text-gray-300">
+                      Subcategoria
+                    </label>
+                    <select
+                      id="subcategory"
+                      name="subcategory"
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      value={formData.subcategory}
+                      onChange={handleChange}
+                    >
+                      <option value="">Selecione...</option>
+                      {SUBCATEGORY_OPTIONS.map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
-                  <label htmlFor="category" className="label-pronutrition dark:text-gray-300">
-                    Categoria
+                  <label htmlFor="pricingId" className="label-pronutrition dark:text-gray-300">
+                    ID da Precificação
                   </label>
-                  <select
-                    id="category"
-                    name="category"
+                  <input
+                    id="pricingId"
+                    name="pricingId"
+                    type="text"
+                    required
                     className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
                     style={{ padding: '0.75rem' }}
-                    value={formData.category}
+                    placeholder="Ex: PRC-2025-0001"
+                    value={formData.pricingId}
                     onChange={handleChange}
+                  />
+                </div>
+
+                {/* Preços por modo */}
+                {modoMercado === 'nacional' ? (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="precoLiquido" className="label-pronutrition dark:text-gray-300">
+                        Preço Líquido (R$)
+                      </label>
+                      <input
+                        id="precoLiquido"
+                        name="precoLiquido"
+                        type="number"
+                        step="0.01"
+                        required
+                        className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                        style={{ padding: '0.75rem' }}
+                        placeholder="89.90"
+                        value={formData.precoLiquido}
+                        onChange={handleChange}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="precoBruto" className="label-pronutrition dark:text-gray-300">
+                        Preço Bruto (R$)
+                      </label>
+                      <input
+                        id="precoBruto"
+                        name="precoBruto"
+                        type="number"
+                        step="0.01"
+                        required
+                        className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                        style={{ padding: '0.75rem' }}
+                        placeholder="129.90"
+                        value={formData.precoBruto}
+                        onChange={handleChange}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label htmlFor="precoBRL" className="label-pronutrition dark:text-gray-300">
+                        Preço BRL
+                      </label>
+                      <input
+                        id="precoBRL"
+                        name="precoBRL"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                        style={{ padding: '0.75rem' }}
+                        placeholder="100.00"
+                        value={formData.precoBRL}
+                        onChange={handleChange}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="precoUSD" className="label-pronutrition dark:text-gray-300">
+                        Preço USD
+                      </label>
+                      <input
+                        id="precoUSD"
+                        name="precoUSD"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                        style={{ padding: '0.75rem' }}
+                        placeholder="20.00"
+                        value={formData.precoUSD}
+                        onChange={handleChange}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="ptax" className="label-pronutrition dark:text-gray-300">
+                        PTAX
+                      </label>
+                      <input
+                        id="ptax"
+                        name="ptax"
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        required
+                        className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                        style={{ padding: '0.75rem' }}
+                        placeholder="5.0000"
+                        value={formData.ptax}
+                        onChange={handleChange}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* MACO% e MB% (lado a lado); MACO vem antes de MB */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="macoPct" className="label-pronutrition dark:text-gray-300">
+                      MACO %
+                    </label>
+                    <input
+                      id="macoPct"
+                      name="macoPct"
+                      type="number"
+                      step="0.1"
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      placeholder="12.5"
+                      value={formData.macoPct}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="margemBruta" className="label-pronutrition dark:text-gray-300">
+                      Margem Bruta (%)
+                    </label>
+                    <input
+                      id="margemBruta"
+                      name="margemBruta"
+                      type="number"
+                      step="0.1"
+                      required
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      placeholder="30.8"
+                      value={formData.margemBruta}
+                      onChange={handleChange}
+                    />
+                  </div>
+                </div>
+
+                {/* Volume (lado a lado com nada, full width para alinhar, mas pode ser 2 colunas para manter grid) */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div></div>
+                  <div>
+                    <label htmlFor="volume" className="label-pronutrition dark:text-gray-300">
+                      Volume
+                    </label>
+                    <input
+                      id="volume"
+                      name="volume"
+                      type="number"
+                      required
+                      className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
+                      style={{ padding: '0.75rem' }}
+                      placeholder="500"
+                      value={formData.volume}
+                      onChange={handleChange}
+                    />
+                  </div>
+                </div>
+
+                {/* Buttons */}
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="px-6 py-3 rounded-lg font-semibold transition-colors bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
                   >
-                    <option value="">Selecione...</option>
-                    {CATEGORY_OPTIONS.map(opt => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="subcategory" className="label-pronutrition dark:text-gray-300">
-                    Subcategoria
-                  </label>
-                  <select
-                    id="subcategory"
-                    name="subcategory"
-                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                    style={{ padding: '0.75rem' }}
-                    value={formData.subcategory}
-                    onChange={handleChange}
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={isSubmitting}
                   >
-                    <option value="">Selecione...</option>
-                    {SUBCATEGORY_OPTIONS.map(opt => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
+                    {isSubmitting ? (editingLead ? 'Salvando...' : 'Adicionando...') : (editingLead ? 'Salvar Alterações' : 'Adicionar Preço')}
+                  </button>
                 </div>
-              </div>
-
-              <div>
-                <label htmlFor="pricingId" className="label-pronutrition dark:text-gray-300">
-                  ID da Precificação
-                </label>
-                <input
-                  id="pricingId"
-                  name="pricingId"
-                  type="text"
-                  required
-                  className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                  style={{ padding: '0.75rem' }}
-                  placeholder="Ex: PRC-2025-0001"
-                  value={formData.pricingId}
-                  onChange={handleChange}
-                />
-              </div>
-
-              {/* Preços (lado a lado) */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="precoLiquido" className="label-pronutrition dark:text-gray-300">
-                    Preço Líquido (R$)
-                  </label>
-                  <input
-                    id="precoLiquido"
-                    name="precoLiquido"
-                    type="number"
-                    step="0.01"
-                    required
-                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                    style={{ padding: '0.75rem' }}
-                    placeholder="89.90"
-                    value={formData.precoLiquido}
-                    onChange={handleChange}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="precoBruto" className="label-pronutrition dark:text-gray-300">
-                    Preço Bruto (R$)
-                  </label>
-                  <input
-                    id="precoBruto"
-                    name="precoBruto"
-                    type="number"
-                    step="0.01"
-                    required
-                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                    style={{ padding: '0.75rem' }}
-                    placeholder="129.90"
-                    value={formData.precoBruto}
-                    onChange={handleChange}
-                  />
-                </div>
-              </div>
-
-              {/* Margem e Volume (lado a lado) */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="margemBruta" className="label-pronutrition dark:text-gray-300">
-                    Margem Bruta (%)
-                  </label>
-                  <input
-                    id="margemBruta"
-                    name="margemBruta"
-                    type="number"
-                    step="0.1"
-                    required
-                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                    style={{ padding: '0.75rem' }}
-                    placeholder="30.8"
-                    value={formData.margemBruta}
-                    onChange={handleChange}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="volume" className="label-pronutrition dark:text-gray-300">
-                    Volume
-                  </label>
-                  <input
-                    id="volume"
-                    name="volume"
-                    type="number"
-                    required
-                    className="input-pronutrition dark:bg-[#0a0a0a] dark:border-gray-700 dark:text-white"
-                    style={{ padding: '0.75rem' }}
-                    placeholder="500"
-                    value={formData.volume}
-                    onChange={handleChange}
-                  />
-                </div>
-              </div>
-
-              {/* Buttons */}
-              <div className="flex justify-end space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="px-6 py-3 rounded-lg font-semibold transition-colors bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? (editingLead ? 'Salvando...' : 'Adicionando...') : (editingLead ? 'Salvar Alterações' : 'Adicionar Preço')}
-                </button>
-              </div>
-            </form>
+              </form>
             </div>
           </div>
         </div>
