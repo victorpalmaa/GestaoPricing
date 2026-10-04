@@ -6,6 +6,9 @@ import { registerPrecoVigenteTool } from './preco_vigente.ts'
 import { registerHistoricoPrecosTool } from './historico_precos.ts'
 import { registerConsultarCatalogoTool } from './consultar_catalogo.ts'
 import { registerConsultarPrecoMinimoTool } from './consultar_preco_minimo.ts'
+import { registerPrepararInsercaoPrecosTool } from './preparar_insercao_precos.ts'
+import { registerConfirmarInsercaoPrecosTool } from './confirmar_insercao_precos.ts'
+import { registerCancelarLotePrecosTool } from './cancelar_lote_precos.ts'
 
 export type { ToolContext } from './types.ts'
 
@@ -15,4 +18,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   registerHistoricoPrecosTool(server, context)
   registerConsultarCatalogoTool(server, context)
   registerConsultarPrecoMinimoTool(server, context)
+  registerPrepararInsercaoPrecosTool(server, context)
+  registerConfirmarInsercaoPrecosTool(server, context)
+  registerCancelarLotePrecosTool(server, context)
 }

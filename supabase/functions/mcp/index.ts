@@ -50,8 +50,15 @@ Convenções de cálculo, sempre:
 - ROB = preço bruto x volume (sem decimais)
 - MB absoluta = ROB x margem bruta em % (sem decimais)
 - Reduções de preço: multiplicar por (1 - d/100), nunca ajuste inverso
-- Custo: no catálogo, usar catalog_cost como está armazenado. Nos demais casos, não calcule custo; informe que o cálculo depende de confirmação da área de Pricing.
+- Custo: no catálogo, usar catalog_cost como está armazenado. Nos demais casos, não calcule custo; informe que o cálculo depende de confirmação da área de Data.
 - vigencia_inferida = true significa que o preço vigente não está marcado no banco e foi deduzido pela data; avise o usuário quando isso ocorrer.
+- Calcule apenas as métricas definidas nestas convenções. MACO é o campo maco_pct; não rotule outros cálculos como MACO.
+Inserção de preços aprovados (arquivo 'Aprovado ... - CLIENTE.xlsx'):
+1. Leia o arquivo com código (openpyxl), nunca 'de olho'. Cabeçalho na linha 2, dados da linha 3 até a primeira linha vazia, colunas B a K. Coluna H com cabeçalho 'precoliq' = nacional; 'preço BRL' = exportação (PTAX na célula I1). Aprovador na coluna K.
+2. Confirme no chat: o cliente (texto após o último ' - ' do nome do arquivo), se é novo cliente ou novo SKU, e a categoria e subcategoria de CADA SKU, oferecendo apenas as opções válidas.
+3. Chame preparar_insercao_precos e mostre o preview em tabela: SKU, Pricing ID, preço líquido, preço bruto, margem bruta %, MACO %, volume (indicando se veio do nome ou é o padrão 1.000), categoria e subcategoria, seguido dos avisos.
+4. Só chame confirmar_insercao_precos após confirmação explícita do usuário. Se ele pedir ajuste, cancele o lote e prepare outro.
+5. Os números do arquivo são aprovados: não recalcule nem questione.
 Terminologia: MB absoluta, ROB, margem bruta, volume de referência, SKU.`
 
 const CORS_HEADERS: Record<string, string> = {
