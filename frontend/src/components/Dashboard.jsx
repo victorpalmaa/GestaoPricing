@@ -154,6 +154,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [basePriceId, setBasePriceId] = useState('');
   const [modoMercado, setModoMercado] = useState('nacional');
+  const [saveError, setSaveError] = useState('');
 
   // Prepare options for base price selection
   const basePriceOptions = useMemo(() => {
@@ -349,6 +350,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
 
   const openModal = (lead = null) => {
     setBasePriceId(''); // Reset base price selection
+    setSaveError('');
     if (lead && !permissions?.canEdit) {
       toast.error('Você não tem permissão para editar');
       return;
@@ -408,7 +410,7 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
     setModoMercado('nacional');
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const isEdit = Boolean(editingLead);
     if (isEdit && !permissions?.canEdit) {
@@ -420,7 +422,6 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       return;
     }
 
-    // Validações específicas
     if (modoMercado === 'exportacao') {
       const brlNum = Number(String(formData.precoBRL || '').replace(',', '.'));
       const usdNum = Number(String(formData.precoUSD || '').replace(',', '.'));
@@ -451,91 +452,97 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
       return;
     }
 
+    setSaveError('');
     setIsSubmitting(true);
 
-    const payload = montarPayloadPreco({
-      modo: modoMercado,
-      cliente: formData.cliente,
-      sku: formData.sku,
-      category: formData.category,
-      subcategory: formData.subcategory,
-      pricingId: formData.pricingId,
-      precoLiquido: formData.precoLiquido,
-      precoBruto: formData.precoBruto,
-      precoBRL: formData.precoBRL,
-      precoUSD: formData.precoUSD,
-      ptax: formData.ptax,
-      margemBruta: formData.margemBruta,
-      macoPct: formData.macoPct,
-      volume: formData.volume,
-      status: formData.status,
-      originType: formData.originType,
-    });
+    try {
+      const payload = montarPayloadPreco({
+        modo: modoMercado,
+        cliente: formData.cliente,
+        sku: formData.sku,
+        category: formData.category,
+        subcategory: formData.subcategory,
+        pricingId: formData.pricingId,
+        precoLiquido: formData.precoLiquido,
+        precoBruto: formData.precoBruto,
+        precoBRL: formData.precoBRL,
+        precoUSD: formData.precoUSD,
+        ptax: formData.ptax,
+        margemBruta: formData.margemBruta,
+        macoPct: formData.macoPct,
+        volume: formData.volume,
+        status: formData.status,
+        originType: formData.originType,
+      });
 
-    const SELECT_COLUMNS = 'id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, maco_pct, volume, status, createdat, origin_type, origin_tag, mercado, preco_usd, ptax';
-    const mapRow = (r) => ({
-      id: r.id,
-      cliente: r.cliente,
-      sku: r.sku,
-      category: r.category,
-      subcategory: r.subcategory,
-      pricingId: r.pricingid,
-      precoLiquido: r.precoliquido,
-      precoBruto: r.precobruto,
-      margemBruta: r.margembruta,
-      macoPct: r.maco_pct,
-      volume: r.volume,
-      status: r.status,
-      createdAt: r.createdat,
-      originType: r.origin_type || '',
-      originTag: r.origin_tag || '',
-      mercado: r.mercado || 'nacional',
-      precoUSD: r.preco_usd,
-      ptax: r.ptax,
-    });
+      const SELECT_COLUMNS = 'id, cliente, sku, category, subcategory, pricingid, precoliquido, precobruto, margembruta, maco_pct, volume, status, createdat, origin_type, origin_tag, mercado, preco_usd, ptax';
+      const mapRow = (r) => ({
+        id: r.id,
+        cliente: r.cliente,
+        sku: r.sku,
+        category: r.category,
+        subcategory: r.subcategory,
+        pricingId: r.pricingid,
+        precoLiquido: r.precoliquido,
+        precoBruto: r.precobruto,
+        margemBruta: r.margembruta,
+        macoPct: r.maco_pct,
+        volume: r.volume,
+        status: r.status,
+        createdAt: r.createdat,
+        originType: r.origin_type || '',
+        originTag: r.origin_tag || '',
+        mercado: r.mercado || 'nacional',
+        precoUSD: r.preco_usd,
+        ptax: r.ptax,
+      });
 
-    const saveDb = {
-      cliente: payload.cliente,
-      sku: payload.sku,
-      category: payload.category,
-      subcategory: payload.subcategory,
-      pricingid: payload.pricingid,
-      precoliquido: payload.precoliquido,
-      precobruto: payload.precobruto,
-      margembruta: payload.margembruta,
-      maco_pct: payload.maco_pct,
-      volume: payload.volume,
-      status: payload.status,
-      origin_type: payload.origin_type,
-      mercado: payload.mercado,
-      preco_usd: payload.preco_usd,
-      ptax: payload.ptax,
-    };
+      const saveDb = {
+        cliente: payload.cliente,
+        sku: payload.sku,
+        category: payload.category,
+        subcategory: payload.subcategory,
+        pricingid: payload.pricingid,
+        precoliquido: payload.precoliquido,
+        precobruto: payload.precobruto,
+        margembruta: payload.margembruta,
+        maco_pct: payload.maco_pct,
+        volume: payload.volume,
+        status: payload.status,
+        origin_type: payload.origin_type,
+        mercado: payload.mercado,
+        preco_usd: payload.preco_usd,
+        ptax: payload.ptax,
+      };
 
-    if (editingLead) {
-      (async () => {
+      let resultData;
+      let resultError;
+
+      if (editingLead) {
         const { data: updatedRows, error } = await supabase
           .from('prices')
           .update(saveDb)
           .eq('id', editingLead.id)
           .select(SELECT_COLUMNS);
+        resultData = updatedRows;
+        resultError = error;
         if (error) {
-          toast.error('Falha ao atualizar');
+          console.error('Erro ao atualizar preço:', error);
         } else {
           const r = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
           const updated = mapRow(r);
           setLeads(leads.map(l => l.id === editingLead.id ? updated : l));
           toast.success('Lead atualizado');
         }
-      })();
-    } else {
-      (async () => {
+      } else {
         const { data: insertedRows, error } = await supabase
           .from('prices')
           .insert([saveDb])
           .select(SELECT_COLUMNS);
+        resultData = insertedRows;
+        resultError = error;
         if (error) {
-          toast.error('Falha ao adicionar');
+          console.error('Erro ao adicionar preço:', error);
         } else {
           const r = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
           const newLead = mapRow(r);
@@ -544,11 +551,20 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
           setTimeout(() => setShowMoney(false), 3000);
           toast.success('Lead adicionado');
         }
-      })();
-    }
+      }
 
-    closeModal();
-    setIsSubmitting(false);
+      if (resultError) {
+        setSaveError('Não foi possível salvar o preço. Verifique os dados e tente novamente.');
+        return;
+      }
+
+      closeModal();
+    } catch (err) {
+      console.error('Exceção ao salvar preço:', err);
+      setSaveError('Não foi possível salvar o preço. Verifique os dados e tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleRejectionSubmit = async () => {
@@ -1515,6 +1531,14 @@ const Dashboard = ({ user, setUser, permissions = { canAdd: true, canEdit: true,
             {/* Modal Form */}
             <div className="p-6 overflow-y-auto flex-1">
               <form onSubmit={handleSubmit} className="space-y-4">
+                {saveError && (
+                  <div className="flex items-start gap-3 p-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
+                    <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                    <span className="text-sm text-red-700 dark:text-red-300 font-medium">
+                      {saveError}
+                    </span>
+                  </div>
+                )}
                 {!editingLead && (
                   <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                     <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center gap-2">
