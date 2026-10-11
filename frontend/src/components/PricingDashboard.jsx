@@ -1208,8 +1208,8 @@ const PricingDashboard = ({ user }) => {
 
     // Validação de valores numéricos
     const netPrice = parseFloat(newPriceForm.net_price);
-    const grossPrice = newPriceForm.gross_price ? parseFloat(newPriceForm.gross_price) : null;
-    const marginBudget = newPriceForm.margin_budget ? parseFloat(newPriceForm.margin_budget) : null;
+    const grossPrice = newPriceForm.gross_price == null || newPriceForm.gross_price === '' ? null : parseFloat(newPriceForm.gross_price);
+    const marginBudget = newPriceForm.margin_budget == null || newPriceForm.margin_budget === '' ? null : parseFloat(newPriceForm.margin_budget);
     
     if (isNaN(netPrice) || netPrice <= 0) {
       toast.error('Preço líquido deve ser um número positivo.');
@@ -1319,14 +1319,14 @@ const PricingDashboard = ({ user }) => {
       client_id: item.client_id,
       sku: item.sku,
       net_price: item.net_price,
-      gross_price: item.gross_price || '',
-      margin_budget: item.margin_budget || '',
+      gross_price: item.gross_price ?? '',
+      margin_budget: item.margin_budget ?? '',
       size: item.size || '',
       manager: item.manager || '',
       code: item.code || '',
       category: item.category || '',
       subcategory: item.subcategory || '',
-      month: item.date ? item.date.split('T')[0] : '', // Use date to populate month input
+      month: item.date ? item.date.split('T')[0].slice(0, 7) : '', // Use date to populate month input
       date: item.date.split('T')[0],
       obs: item.obs || '',
       currency: item.currency || 'BRL'
