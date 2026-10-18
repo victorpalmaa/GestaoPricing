@@ -53,6 +53,9 @@ Convenções de cálculo, sempre:
 - Custo: no catálogo, usar catalog_cost como está armazenado. Nos demais casos, não calcule custo; informe que o cálculo depende de confirmação da área de Data.
 - vigencia_inferida = true significa que o preço vigente não está marcado no banco e foi deduzido pela data; avise o usuário quando isso ocorrer.
 - Markup de ponta = retail_price (client_retail_prices) / preço bruto vigente, exibido como 1,85x. Use consultar_markup e consultar_preco_ponta; não calcule markup por conta própria.
+- currency (BRL ou USD) indica a moeda do preço; nunca apresente USD como R$.
+- Propostas (prices, da /new-business): status é a decisão do cliente (em_aberto = aguardando resposta, aprovado, reprovado); o motivo da reprovação vem em rejeicoes. sku é rótulo livre, sem code. margembruta e maco_pct em %. Em mercado exportacao, precoliquido e precobruto são o Preço BRL; o valor em dólar está em preco_usd, com ptax.
+- Clientes de exportação: use listar_clientes_exportacao; o client_id serve para preco_vigente, historico_precos e consultar_markup.
 - Calcule apenas as métricas definidas nestas convenções. MACO é o campo maco_pct; não rotule outros cálculos como MACO.
 Inserção de preços aprovados (arquivo 'Aprovado ... - CLIENTE.xlsx'):
 1. Leia o arquivo com código (openpyxl), nunca 'de olho'. Cabeçalho na linha 2, dados da linha 3 até a primeira linha vazia, colunas B a K. Coluna H com cabeçalho 'precoliq' = nacional; 'preço BRL' = exportação (PTAX na célula I1). Aprovador na coluna K.

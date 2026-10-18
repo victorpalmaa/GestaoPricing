@@ -8,6 +8,8 @@ import { registerConsultarCatalogoTool } from './consultar_catalogo.ts'
 import { registerConsultarPrecoMinimoTool } from './consultar_preco_minimo.ts'
 import { registerConsultarPrecoPontaTool } from './consultar_preco_ponta.ts'
 import { registerConsultarMarkupTool } from './consultar_markup.ts'
+import { registerListarClientesExportacaoTool } from './listar_clientes_exportacao.ts'
+import { registerConsultarPropostasPrecosTool } from './consultar_propostas_precos.ts'
 import { registerPrepararInsercaoPrecosTool } from './preparar_insercao_precos.ts'
 import { registerConfirmarInsercaoPrecosTool } from './confirmar_insercao_precos.ts'
 import { registerCancelarLotePrecosTool } from './cancelar_lote_precos.ts'
@@ -22,6 +24,8 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   registerConsultarPrecoMinimoTool(server, context)
   registerConsultarPrecoPontaTool(server, context)
   registerConsultarMarkupTool(server, context)
+  registerListarClientesExportacaoTool(server, context)
+  registerConsultarPropostasPrecosTool(server, context)
   registerPrepararInsercaoPrecosTool(server, context)
   registerConfirmarInsercaoPrecosTool(server, context)
   registerCancelarLotePrecosTool(server, context)
