@@ -36,6 +36,7 @@ const LinhaLoteSchema = z.object({
   coluna_i: z.number(),
   categoria: z.enum(CATEGORIAS),
   subcategoria: z.enum(SUBCATEGORIAS),
+  volume: z.number().nullish(),
 })
 
 export function registerPrepararInsercaoPrecosTool(
@@ -65,6 +66,12 @@ export function registerPrepararInsercaoPrecosTool(
     },
     async (input) => {
       try {
+        const linhas = input.linhas.map((linha) => {
+          const { volume, ...resto } = linha
+          if (volume === undefined || volume === null) return resto
+          return { ...resto, volume }
+        })
+
         const { data, error } = await supabase.rpc('mcp_preparar_lote_precos', {
           p_arquivo_nome: input.arquivo_nome,
           p_cliente: input.cliente,
@@ -72,7 +79,7 @@ export function registerPrepararInsercaoPrecosTool(
           p_origin_type: input.origin_type,
           p_ptax: input.ptax ?? null,
           p_aprovador: input.aprovador ?? null,
-          p_linhas: input.linhas as unknown,
+          p_linhas: linhas as unknown,
         })
 
         if (error) {

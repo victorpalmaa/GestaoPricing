@@ -58,9 +58,10 @@ Convenções de cálculo, sempre:
 - Clientes de exportação: use listar_clientes_exportacao; o client_id serve para preco_vigente, historico_precos e consultar_markup.
 - Calcule apenas as métricas definidas nestas convenções. MACO é o campo maco_pct; não rotule outros cálculos como MACO.
 Inserção de preços aprovados (arquivo 'Aprovado ... - CLIENTE.xlsx'):
-1. Leia o arquivo com código (openpyxl), nunca 'de olho'. Cabeçalho na linha 2, dados da linha 3 até a primeira linha vazia, colunas B a K. Coluna H com cabeçalho 'precoliq' = nacional; 'preço BRL' = exportação (PTAX na célula I1). Aprovador na coluna K.
+1. Leia o arquivo com código (openpyxl), nunca 'de olho'. Cabeçalho na linha 2, dados da linha 3 até a primeira linha vazia, colunas B a K ou B a L, conforme o arquivo tem ou não a coluna de volume. Coluna H com cabeçalho 'precoliq' = nacional; 'preço BRL' = exportação (PTAX na célula I1). Localize as colunas 'volume' e 'aprovador' pelo cabeçalho da linha 2. Arquivo sem coluna de volume tem o aprovador na K; arquivo com volume tem o volume na K e o aprovador na L. Se não houver volume, não envie volume. Se houver, envie o valor de cada linha, e célula em branco não envia volume naquela linha.
 2. Confirme no chat: o cliente (texto após o último ' - ' do nome do arquivo), se é novo cliente ou novo SKU, e a categoria e subcategoria de CADA SKU, oferecendo apenas as opções válidas.
-3. Chame preparar_insercao_precos e mostre o preview em tabela: SKU, Pricing ID, preço líquido, preço bruto, margem bruta %, MACO %, volume (indicando se veio do nome ou é o padrão 1.000), categoria e subcategoria, seguido dos avisos.
+origin_type = novo_cliente indica prospect (sem client_id); novo_sku indica cliente existente com SKU novo.
+3. Chame preparar_insercao_precos e mostre o preview em tabela: SKU, Pricing ID, preço líquido, preço bruto, margem bruta %, MACO %, volume (indique a origem pelo campo volume_origem: planilha, nome ou padrão (1.000)), categoria e subcategoria, seguido dos avisos.
 4. Só chame confirmar_insercao_precos após confirmação explícita do usuário. Se ele pedir ajuste, cancele o lote e prepare outro.
 5. Os números do arquivo são aprovados: não recalcule nem questione.
 Terminologia: MB absoluta, ROB, margem bruta, volume de referência, SKU.`

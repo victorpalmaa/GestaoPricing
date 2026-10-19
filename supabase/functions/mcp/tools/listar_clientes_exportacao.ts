@@ -23,7 +23,7 @@ export function registerListarClientesExportacaoTool(
     'listar_clientes_exportacao',
     {
       description:
-        'Lista os clientes com preço vigente em dólar (pricing_history com currency = USD e is_current = true). Retorna o client_id, o nome, a quantidade de SKUs vigentes em USD (codes distintos) e a data do preço vigente mais recente. Use o client_id retornado em preco_vigente, historico_precos e consultar_markup.',
+        'Lista clientes da base com preço vigente em USD. Prospects ficam em consultar_propostas_precos.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
