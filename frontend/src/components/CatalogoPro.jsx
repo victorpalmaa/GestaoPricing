@@ -49,6 +49,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { logExport, logImport } from '@/utils/activityLog';
 import { parseVbaVersaoLabel, reconcileVbaCatalogRow, parseExcelDate, parsePercent } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
+import CompetitorPricesDialog from './CompetitorPricesDialog';
 
 const VOLUMES = [1000, 1500, 3000, 5000];
 const DEFAULT_CATEGORIES = ['Pó', 'Gel', 'Goma', 'Softgel', 'Cápsula'];
@@ -345,6 +346,7 @@ const CatalogoPro = ({ user }) => {
   });
   const [deleteRow, setDeleteRow] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [competitorDialogSku, setCompetitorDialogSku] = useState('');
 
   const selectedCatalogConfig = selectedCatalog ? CATALOG_CONFIG[selectedCatalog] : null;
 
@@ -1083,7 +1085,20 @@ const CatalogoPro = ({ user }) => {
                     {isPricingUser ? (
                       <>
                         <TableCell>{row?.[selectedCatalogConfig.idField] || '—'}</TableCell>
-                        <TableCell>{row?.sku || '—'}</TableCell>
+                        <TableCell>
+                          {selectedCatalog === 'brazil' && row?.sku ? (
+                            <Button
+                              type="button"
+                              variant="link"
+                              className="h-auto p-0 text-left font-normal text-gray-900 no-underline hover:underline dark:text-white"
+                              onClick={() => setCompetitorDialogSku(row.sku)}
+                            >
+                              {row.sku}
+                            </Button>
+                          ) : (
+                            row?.sku || '—'
+                          )}
+                        </TableCell>
                         <TableCell>{formatCurrency(row?.[selectedCatalogConfig.costField], 'R$')}</TableCell>
                         <TableCell>{formatPercent(row?.[selectedCatalogConfig.marginField])}</TableCell>
                         <TableCell>
@@ -1104,7 +1119,20 @@ const CatalogoPro = ({ user }) => {
                     ) : (
                       <>
                         <TableCell>{row?.[selectedCatalogConfig.idField] || '—'}</TableCell>
-                        <TableCell>{row?.sku || '—'}</TableCell>
+                        <TableCell>
+                          {selectedCatalog === 'brazil' && row?.sku ? (
+                            <Button
+                              type="button"
+                              variant="link"
+                              className="h-auto p-0 text-left font-normal text-gray-900 no-underline hover:underline dark:text-white"
+                              onClick={() => setCompetitorDialogSku(row.sku)}
+                            >
+                              {row.sku}
+                            </Button>
+                          ) : (
+                            row?.sku || '—'
+                          )}
+                        </TableCell>
                         <TableCell>{formatVolume(row?.volume)}</TableCell>
                         <TableCell>
                           {formatCurrency(
@@ -1678,6 +1706,14 @@ const CatalogoPro = ({ user }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CompetitorPricesDialog
+        sku={competitorDialogSku}
+        open={Boolean(competitorDialogSku)}
+        onOpenChange={(open) => {
+          if (!open) setCompetitorDialogSku('');
+        }}
+      />
     </div>
   );
 };
