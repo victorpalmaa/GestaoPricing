@@ -21,41 +21,6 @@ function normalizeAttrs(row) {
   };
 }
 
-function batchMatches(row, batch) {
-  if (!row || !batch) return false;
-
-  const candidateKeys = [
-    row.batch_id,
-    row.import_batch_id,
-    row.competitor_import_batch_id,
-    row.competitor_batch_id,
-  ].filter((value) => value !== null && value !== undefined);
-
-  if (candidateKeys.length > 0 && batch.id !== null && batch.id !== undefined) {
-    return candidateKeys.some((value) => String(value) === String(batch.id));
-  }
-
-  const candidateLabels = [
-    row.batch,
-    row.batch_label,
-    row.label,
-  ].filter((value) => value !== null && value !== undefined);
-
-  if (candidateLabels.length > 0 && batch.label) {
-    return candidateLabels.some((value) => String(value) === String(batch.label));
-  }
-
-  const quotedAt = row.quoted_at ? new Date(row.quoted_at).getTime() : NaN;
-  const quotedFrom = batch.quoted_from ? new Date(batch.quoted_from).getTime() : NaN;
-  const quotedTo = batch.quoted_to ? new Date(batch.quoted_to).getTime() : NaN;
-
-  if (Number.isFinite(quotedAt) && Number.isFinite(quotedFrom) && Number.isFinite(quotedTo)) {
-    return quotedAt >= quotedFrom && quotedAt <= quotedTo;
-  }
-
-  return true;
-}
-
 function getMatchKey(competitor, competitorSku) {
   return `${String(competitor || '').trim()}::${String(competitorSku || '').trim()}`;
 }
@@ -123,19 +88,17 @@ export function useCompetitorComparison(sku) {
           supabase
             .from('catalog_sku_attributes')
             .select('pack_qty, pack_unit, pack_weight_g')
-            .eq('sku', sku)
+            .eq('catalog_sku', sku)
             .maybeSingle(),
           supabase
             .from('competitor_import_batches')
             .select('*')
             .eq('is_current', true)
-            .order('quoted_to', { ascending: false })
-            .limit(1)
             .maybeSingle(),
           supabase
             .from('competitor_sku_map')
-            .select('*')
-            .eq('sku', sku)
+            .select('catalog_sku, competitor, competitor_sku, match_level, diff_reason, note')
+            .eq('catalog_sku', sku)
             .order('competitor', { ascending: true })
             .order('competitor_sku', { ascending: true }),
         ]);
@@ -162,6 +125,21 @@ export function useCompetitorComparison(sku) {
         const batch = batchResult.data || null;
         const mapRows = mapResult.data || [];
 
+        if (!batch) {
+          if (!cancelled) {
+            setState({
+              loading: false,
+              error: 'Nenhum lote de cotações vigente.',
+              tiers,
+              pricesByTier,
+              proAttrs,
+              batch: null,
+              matches: [],
+            });
+          }
+          return;
+        }
+
         let competitorPrices = [];
 
         if (mapRows.length > 0) {
@@ -174,7 +152,8 @@ export function useCompetitorComparison(sku) {
           if (competitorSkus.length > 0) {
             const competitorPricesResult = await supabase
               .from('competitor_prices')
-              .select('*')
+              .select('batch_id, competitor, competitor_sku, pack_qty, pack_unit, pack_weight_g, volume, gross_price, quoted_at')
+              .eq('batch_id', batch.id)
               .in('competitor_sku', competitorSkus)
               .order('competitor', { ascending: true })
               .order('competitor_sku', { ascending: true })
@@ -182,36 +161,43 @@ export function useCompetitorComparison(sku) {
 
             if (competitorPricesResult.error) throw competitorPricesResult.error;
 
-            competitorPrices = (competitorPricesResult.data || []).filter((row) => batchMatches(row, batch));
+            competitorPrices = competitorPricesResult.data || [];
           }
         }
 
         const quotesByMatch = new Map();
+        const attrsByMatch = new Map();
         for (const row of competitorPrices) {
-          const competitor = normalizeText(row?.competitor ?? row?.competitor_name);
+          const competitor = normalizeText(row?.competitor);
           const competitorSku = normalizeText(row?.competitor_sku);
           if (!competitor || !competitorSku) continue;
 
           const key = getMatchKey(competitor, competitorSku);
           if (!quotesByMatch.has(key)) quotesByMatch.set(key, []);
+          if (!attrsByMatch.has(key)) attrsByMatch.set(key, normalizeAttrs(row));
           quotesByMatch.get(key).push({
             volume: normalizeNumber(row?.volume),
             gross_price: normalizeNumber(row?.gross_price),
-            quoted_at: row?.quoted_at || batch?.quoted_to || null,
+            quoted_at: row?.quoted_at || null,
           });
         }
 
         const matches = mapRows.map((row) => {
-          const competitor = normalizeText(row?.competitor ?? row?.competitor_name) || '—';
-          const competitorSku = normalizeText(row?.competitor_sku) || '—';
+          const competitor = normalizeText(row?.competitor);
+          const competitorSku = normalizeText(row?.competitor_sku);
+          const key = getMatchKey(competitor, competitorSku);
           return {
-            competitor,
-            competitor_sku: competitorSku,
+            competitor: competitor || '—',
+            competitor_sku: competitorSku || '—',
             match_level: normalizeText(row?.match_level) || 'referencia',
             diff_reason: normalizeText(row?.diff_reason),
             note: normalizeText(row?.note),
-            attrs: normalizeAttrs(row),
-            quotes: (quotesByMatch.get(getMatchKey(competitor, competitorSku)) || [])
+            attrs: attrsByMatch.get(key) || {
+              pack_qty: null,
+              pack_unit: null,
+              pack_weight_g: null,
+            },
+            quotes: (quotesByMatch.get(key) || [])
               .filter((quote) => quote.volume !== null && quote.gross_price !== null),
           };
         });

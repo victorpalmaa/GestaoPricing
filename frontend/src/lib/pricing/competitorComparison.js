@@ -181,6 +181,7 @@ export function buildComparison({ tier, proPrice, proAttrs, matches, today }) {
         preferredBasis,
         n: 0,
         median: null,
+        medianProductEquivalent: null,
         deltaVsMedian: null,
         min: null,
         cheapestCompetitor: null,
@@ -197,6 +198,13 @@ export function buildComparison({ tier, proPrice, proAttrs, matches, today }) {
   const minValue = Math.min(...metrics);
   const cheapestRow = eligible.find((row) => row.mConc === minValue) ?? null;
   const position = 1 + eligible.filter((row) => row.mConc < mPro).length;
+  const proWeight = parsePositiveNumber(proAttrs?.pack_weight_g);
+  const proQty = parsePositiveNumber(proAttrs?.pack_qty);
+  const medianProductEquivalent = preferredBasis === 'r100g' && Number.isFinite(proWeight)
+    ? medianValue * proWeight / 100
+    : preferredBasis === 'runidade' && Number.isFinite(proQty)
+      ? medianValue * proQty
+      : null;
 
   return {
     rows,
@@ -204,6 +212,7 @@ export function buildComparison({ tier, proPrice, proAttrs, matches, today }) {
       preferredBasis,
       n,
       median: medianValue,
+      medianProductEquivalent,
       deltaVsMedian: medianValue != null ? (mPro / medianValue) - 1 : null,
       min: minValue,
       cheapestCompetitor: cheapestRow?.competitor ?? null,

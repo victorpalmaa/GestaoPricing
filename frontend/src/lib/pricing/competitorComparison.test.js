@@ -217,6 +217,7 @@ describe('competitorComparison', () => {
       expect(result.summary.total).toBe(9);
       expect(result.summary.cheapestCompetitor).toBe('Fitoway');
       expect(result.summary.deltaVsMedian).toBeCloseTo(-0.2533, 3);
+      expect(result.summary.medianProductEquivalent).toBeCloseTo(31.81, 2);
       expect(result.summary.deltaVsMin).toBeCloseTo(0.1151, 3);
 
       const row3Life = result.rows.find((row) => row.competitor === '3Life');
