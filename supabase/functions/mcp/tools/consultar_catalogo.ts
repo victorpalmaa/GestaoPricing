@@ -13,7 +13,7 @@ export function registerConsultarCatalogoTool(
     'consultar_catalogo',
     {
       description:
-        'Consulta o catálogo Brasil (catalog_br_prices) por SKU. Retorna preço líquido (catalog_price), preço bruto (catalog_gross_price), custo (catalog_cost) e margem em fração catalog_margin (0.25 = 25%). Não converta a margem; use a unidade conforme SERVER_INSTRUCTIONS.',
+        'Consulta o catálogo Brasil (catalog_br_prices) ou o catálogo LATAM (catalog_latam_prices) por SKU. Use o parâmetro mercado: "br" (padrão) ou "latam". No Brasil, retorna preço líquido (catalog_price), preço bruto (catalog_gross_price), custo (catalog_cost) e margem em fração catalog_margin (0.25 = 25%). No LATAM, retorna os campos nativos price_brl e price_usd, sem separar líquido/bruto. Não converta a margem; use a unidade conforme SERVER_INSTRUCTIONS.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -31,12 +31,17 @@ export function registerConsultarCatalogoTool(
           .positive()
           .optional()
           .describe('Volume de referência opcional (ex: 1000, 1500, 3000, 5000). Se omitido, retorna todos os volumes encontrados.'),
+        mercado: z
+          .enum(['br', 'latam'])
+          .optional()
+          .describe('Mercado a consultar: "br" (padrão) para catalog_br_prices ou "latam" para catalog_latam_prices.'),
       }),
     },
-    async (input) => {
+    async (input: { sku?: unknown; volume?: unknown; mercado?: unknown }) => {
       try {
         const sku = typeof input?.sku === 'string' ? input.sku.trim() : ''
         const volume = typeof input?.volume === 'number' ? Number(input.volume) : null
+        const mercado = input?.mercado === 'latam' ? 'latam' : 'br'
 
         if (sku.length < 2) {
           return errorResult('O parâmetro "sku" é obrigatório e deve ter pelo menos 2 caracteres.')
@@ -46,6 +51,26 @@ export function registerConsultarCatalogoTool(
         }
 
         const skuLike = `%${escapeIlikeWildcards(sku)}%`
+
+        if (mercado === 'latam') {
+          let query = supabase
+            .from('catalog_latam_prices')
+            .select('catalog_id, sku, category, volume, price_brl, price_usd, catalog_cost, catalog_margin')
+            .ilike('sku', skuLike)
+
+          if (volume !== null) {
+            query = query.eq('volume', volume)
+          }
+
+          const { data, error } = await query
+            .order('sku')
+            .order('volume')
+            .limit(20)
+
+          if (error) throw error
+
+          return jsonResult(data ?? [])
+        }
 
         let query = supabase
           .from('catalog_br_prices')

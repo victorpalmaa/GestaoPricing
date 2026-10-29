@@ -41,6 +41,10 @@ Fluxo: use buscar_cliente para obter o client_id antes de consultar preços.
 Mapeamento de campos:
 - Preço bruto: gross_price (pricing_history), catalog_gross_price (catálogo), precobruto (preço mínimo)
 - Preço líquido: net_price (pricing_history), catalog_price (catálogo)
+- Em consultar_catalogo, "catálogo LATAM", "exportação" ou "preço em dólar do catálogo" significam mercado = 'latam'.
+- O catálogo LATAM tem price_brl e price_usd; não existe separação entre preço líquido e preço bruto.
+- catalog_margin é fração nos dois catálogos (0.25 = 25%); não converta.
+- Não confunda consultar_catalogo com mercado = 'latam' com listar_clientes_exportacao ou pricing_history, que tratam preços negociados de clientes.
 - Margem bruta, ATENÇÃO À UNIDADE:
   margin_budget (pricing_history) vem em % (39.5 = 39,5%);
   catalog_margin (catálogo) e margem (preço mínimo) vêm em fração (0.25 = 25%).
@@ -57,6 +61,10 @@ Convenções de cálculo, sempre:
 - Propostas (prices, da /new-business): status é a decisão do cliente (em_aberto = aguardando resposta, aprovado, reprovado); o motivo da reprovação vem em rejeicoes. sku é rótulo livre, sem code. margembruta e maco_pct em %. Em mercado exportacao, precoliquido e precobruto são o Preço BRL; o valor em dólar está em preco_usd, com ptax.
 - Clientes de exportação: use listar_clientes_exportacao; o client_id serve para preco_vigente, historico_precos e consultar_markup.
 - Calcule apenas as métricas definidas nestas convenções. MACO é o campo maco_pct; não rotule outros cálculos como MACO.
+- Em consultar_precos_concorrentes, a comparação é sempre preço bruto PRO x preço bruto concorrente, normalizada por 100 g ou por unidade.
+- Em consultar_precos_concorrentes, "posição 1 de total" significa que o PRO é o mais barato.
+- Em consultar_precos_concorrentes, referências nunca entram no resumo; só cite referências se o usuário pedir.
+- Em consultar_precos_concorrentes, sinalize cotações com idade warn (> 6 meses) ou stale (> 1 ano) e também quando estiverem fora_do_tier.
 Inserção de preços aprovados (arquivo 'Aprovado ... - CLIENTE.xlsx'):
 1. Leia o arquivo com código (openpyxl), nunca 'de olho'. Cabeçalho na linha 2, dados da linha 3 até a primeira linha vazia, colunas B a K ou B a L, conforme o arquivo tem ou não a coluna de volume. Coluna H com cabeçalho 'precoliq' = nacional; 'preço BRL' = exportação (PTAX na célula I1). Localize as colunas 'volume' e 'aprovador' pelo cabeçalho da linha 2. Arquivo sem coluna de volume tem o aprovador na K; arquivo com volume tem o volume na K e o aprovador na L. Se não houver volume, não envie volume. Se houver, envie o valor de cada linha, e célula em branco não envia volume naquela linha.
 2. Confirme no chat: o cliente (texto após o último ' - ' do nome do arquivo), se é novo cliente ou novo SKU, e a categoria e subcategoria de CADA SKU, oferecendo apenas as opções válidas.

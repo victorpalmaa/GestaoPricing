@@ -5,6 +5,7 @@ import { registerBuscarClienteTool } from './buscar_cliente.ts'
 import { registerPrecoVigenteTool } from './preco_vigente.ts'
 import { registerHistoricoPrecosTool } from './historico_precos.ts'
 import { registerConsultarCatalogoTool } from './consultar_catalogo.ts'
+import { registerConsultarPrecosConcorrentesTool } from './consultar_precos_concorrentes.ts'
 import { registerConsultarPrecoMinimoTool } from './consultar_preco_minimo.ts'
 import { registerConsultarPrecoPontaTool } from './consultar_preco_ponta.ts'
 import { registerConsultarMarkupTool } from './consultar_markup.ts'
@@ -21,6 +22,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   registerPrecoVigenteTool(server, context)
   registerHistoricoPrecosTool(server, context)
   registerConsultarCatalogoTool(server, context)
+  registerConsultarPrecosConcorrentesTool(server, context)
   registerConsultarPrecoMinimoTool(server, context)
   registerConsultarPrecoPontaTool(server, context)
   registerConsultarMarkupTool(server, context)
