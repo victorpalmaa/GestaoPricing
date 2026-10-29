@@ -46,6 +46,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useAuth } from '@/contexts/AuthContext';
+import { getValidadeCatalogo } from '@/lib/catalogo/validadeCatalogo';
 import { logExport, logImport } from '@/utils/activityLog';
 import { parseVbaVersaoLabel, reconcileVbaCatalogRow, parseExcelDate, parsePercent } from '@/utils/catalogImportReconciliation';
 import { getPermissionErrorMessage, isPermissionError } from '@/utils/permissionErrors';
@@ -304,21 +305,6 @@ const sortCatalogRows = (rows) =>
     return Number(a?.volume || 0) - Number(b?.volume || 0);
   });
 
-const getDaysUntilExpiry = () => {
-  const today = new Date();
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const endOfExpiry = new Date(
-    EXPIRY_DATE.getFullYear(),
-    EXPIRY_DATE.getMonth(),
-    EXPIRY_DATE.getDate(),
-    23,
-    59,
-    59,
-    999
-  );
-  return Math.ceil((endOfExpiry.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
-};
-
 const CatalogoPro = ({ user }) => {
   const { isPricing: isPricingUser, user: authUser } = useAuth();
   const [selectedCatalog, setSelectedCatalog] = useState('');
@@ -351,21 +337,21 @@ const CatalogoPro = ({ user }) => {
   const selectedCatalogConfig = selectedCatalog ? CATALOG_CONFIG[selectedCatalog] : null;
 
   const validityAlert = useMemo(() => {
-    const daysUntilExpiry = getDaysUntilExpiry();
+    const validity = getValidadeCatalogo(new Date(), EXPIRY_DATE);
 
-    if (daysUntilExpiry > 30) {
+    if (validity.phase === 'vigente') {
       return {
         title: 'Preços vigentes',
-        description: `Os preços deste catálogo são válidos até ${EXPIRY_DATE_TEXT}.`,
+        description: validity.description,
         className: 'border-blue-200 bg-blue-50 dark:border-blue-900/40 dark:bg-blue-950/20',
         iconClassName: 'text-blue-600 dark:text-blue-400',
       };
     }
 
-    if (daysUntilExpiry > 0) {
+    if (validity.phase === 'aviso') {
       return {
         title: 'Validade dos preços se aproxima',
-        description: `Os preços deste catálogo são válidos até ${EXPIRY_DATE_TEXT}.`,
+        description: validity.description,
         className: 'border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20',
         iconClassName: 'text-amber-600 dark:text-amber-400',
       };
@@ -373,7 +359,7 @@ const CatalogoPro = ({ user }) => {
 
     return {
       title: 'Validade dos preços encerrada',
-      description: `A validade dos preços foi encerrada em ${EXPIRY_DATE_TEXT}. Para atualização, acesse o time de Data. O catálogo continua disponível para consulta.`,
+      description: validity.description,
       className: 'border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20',
       iconClassName: 'text-red-600 dark:text-red-400',
     };
