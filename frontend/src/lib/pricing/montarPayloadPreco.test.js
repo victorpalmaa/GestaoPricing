@@ -127,6 +127,41 @@ describe('montarPayloadPreco', () => {
     });
     expect(payload.origin_type).toBeNull();
   });
+
+  it('normaliza pricingId removendo todos os espaços em branco', () => {
+    const payload = montarPayloadPreco({
+      pricingId: ' 01106- 017',
+    });
+    expect(payload.pricingid).toBe('01106-017');
+  });
+
+  it('mantém pricingId já limpo', () => {
+    const payload = montarPayloadPreco({
+      pricingId: '01106-017',
+    });
+    expect(payload.pricingid).toBe('01106-017');
+  });
+
+  it('pricingId null vira string vazia', () => {
+    const payload = montarPayloadPreco({
+      pricingId: null,
+    });
+    expect(payload.pricingid).toBe('');
+  });
+
+  it('aplica trim no sku sem mexer em espaços internos', () => {
+    const payload = montarPayloadPreco({
+      sku: 'HIVE Whey 900g ',
+    });
+    expect(payload.sku).toBe('HIVE Whey 900g');
+  });
+
+  it('preserva espaços internos do sku', () => {
+    const payload = montarPayloadPreco({
+      sku: 'HIVE  Whey',
+    });
+    expect(payload.sku).toBe('HIVE  Whey');
+  });
 });
 
 describe('validarMacoPct', () => {

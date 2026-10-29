@@ -30,6 +30,16 @@ function parseMacoPct(valor) {
   return n;
 }
 
+function normalizePricingId(pricingId) {
+  if (pricingId == null) return '';
+  return String(pricingId).replace(/\s+/g, '');
+}
+
+function normalizeSku(sku) {
+  if (sku == null) return '';
+  return String(sku).trim();
+}
+
 export function montarPayloadPreco(params = {}) {
   const {
     modo = 'nacional',
@@ -74,10 +84,10 @@ export function montarPayloadPreco(params = {}) {
 
   return {
     cliente: cliente == null ? '' : String(cliente),
-    sku: sku == null ? '' : String(sku),
+    sku: normalizeSku(sku),
     category: category == null ? '' : String(category),
     subcategory: subcategory == null ? '' : String(subcategory),
-    pricingid: pricingId == null ? '' : String(pricingId),
+    pricingid: normalizePricingId(pricingId),
     precoliquido,
     precobruto,
     margembruta: parseNumero(margemBruta, 1),
